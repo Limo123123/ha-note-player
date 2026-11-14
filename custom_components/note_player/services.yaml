@@ -1,0 +1,208 @@
+play_notes:
+  name: Noten / Melodie abspielen
+  description: Wandelt Noten, Akkorde oder RTTTL-Melodien live in echte Instrumenten-Klänge (WAV) um und spielt sie auf gewählten Lautsprechern ab.
+  target:
+    entity:
+      domain: media_player
+  fields:
+    instrument:
+      name: Instrument
+      description: Wähle das gewünschte Instrument aus.
+      required: false
+      default: ocarina
+      selector:
+        select:
+          options:
+            - label: Okarina
+              value: ocarina
+            - label: Querflöte
+              value: flute
+            - label: Panflöte
+              value: pan_flute
+            - label: Klavier (Flügel)
+              value: piano
+            - label: E-Piano (Rhodes)
+              value: epiano
+            - label: Akustik-Gitarre (Nylon)
+              value: guitar
+            - label: Westerngitarre (Stahlsaiten)
+              value: steel_guitar
+            - label: E-Gitarre
+              value: electric_guitar
+            - label: Violine / Streicher
+              value: violin
+            - label: Harfe
+              value: harp
+            - label: Spieluhr / Glockenspiel
+              value: music_box
+            - label: Orgel
+              value: organ
+            - label: 8-Bit / Retro
+              value: chiptune
+    notes:
+      name: Noten / Akkorde / RTTTL
+      description: "Notenfolge (z. B. 'A4:4 D4:2 F4:4'), Akkorde ('C4+E4+G4:2' oder 'Am:2 G7:2 Cmaj:1'), Pausen ('R:4') oder RTTTL-Strings."
+      required: true
+      example: "A4:4 D4:2 F4:4 A4:4 D4:2 F4:4 A4:8 C5:8 B4:4 G4:4 F4:8 G4:8 A4:4 D4:4 C4:8 E4:8 D4:1"
+      selector:
+        text:
+          multiline: true
+    bpm:
+      name: Tempo (BPM)
+      description: Geschwindigkeit in Schlägen pro Minute (bei RTTTL optional als Override).
+      required: false
+      default: 120
+      selector:
+        number:
+          min: 30
+          max: 300
+          step: 1
+          unit_of_measurement: BPM
+          mode: slider
+    octave:
+      name: Standard-Oktave
+      description: Oktave für Noten ohne explizite Ziffer (z. B. 'C E G').
+      required: false
+      default: 4
+      selector:
+        number:
+          min: 1
+          max: 7
+          step: 1
+          mode: slider
+    reverb:
+      name: Raumhall (Reverb)
+      description: Anteil an natürlichem Raumhall (0 = trocken, 1 = großer Saal).
+      required: false
+      default: 0.25
+      selector:
+        number:
+          min: 0.0
+          max: 1.0
+          step: 0.05
+          mode: slider
+    volume_level:
+      name: Lautstärke (optional)
+      description: Setzt optional die Lautstärke des Ziel-Lautsprechers vor dem Abspielen (0.0 bis 1.0).
+      required: false
+      selector:
+        number:
+          min: 0.0
+          max: 1.0
+          step: 0.05
+          mode: slider
+    announce:
+      name: Als Durchsage abspielen (Announce)
+      description: Spielt die Melodie als kurze Ankündigung (unterbricht laufende Musik schonend, falls vom Speaker unterstützt).
+      required: false
+      default: true
+      selector:
+        boolean:
+
+play_preset:
+  name: Eingebaute Melodie (Preset) abspielen
+  description: Spielt eine bekannte Beispiel-Melodie mit passendem Instrument (optional überschreibbar).
+  target:
+    entity:
+      domain: media_player
+  fields:
+    preset:
+      name: Melodie-Preset
+      description: Wähle eine fertige Melodie aus.
+      required: true
+      default: zelda_song_of_time
+      selector:
+        select:
+          options:
+            - label: Zelda – Hymne der Zeit (Song of Time / Okarina)
+              value: zelda_song_of_time
+            - label: Zelda – Zeldas Wiegenlied (Okarina)
+              value: zelda_lullaby
+            - label: Zelda – Salias Lied (Okarina)
+              value: zelda_sarias_song
+            - label: Zelda – Hymne des Sturms (Okarina)
+              value: zelda_storms
+            - label: Zelda – Geheimnis entdeckt (Harfe)
+              value: zelda_secret
+            - label: Beethoven – Für Elise (Klavier)
+              value: fur_elise
+            - label: Spanische Romanze (Akustik-Gitarre)
+              value: spanish_romance
+            - label: Grieg – Morgenstimmung (Querflöte)
+              value: morning_mood
+            - label: Türklingel – Warmes Glockenspiel (Spieluhr)
+              value: doorbell_warm
+            - label: Erfolgs-Jingle (Harfe)
+              value: notification_success
+    instrument:
+      name: Instrument überschreiben (optional)
+      description: Optional ein anderes Instrument als das Standard-Instrument des Presets wählen.
+      required: false
+      selector:
+        select:
+          options:
+            - label: Okarina
+              value: ocarina
+            - label: Querflöte
+              value: flute
+            - label: Panflöte
+              value: pan_flute
+            - label: Klavier (Flügel)
+              value: piano
+            - label: E-Piano (Rhodes)
+              value: epiano
+            - label: Akustik-Gitarre (Nylon)
+              value: guitar
+            - label: Westerngitarre (Stahlsaiten)
+              value: steel_guitar
+            - label: E-Gitarre
+              value: electric_guitar
+            - label: Violine / Streicher
+              value: violin
+            - label: Harfe
+              value: harp
+            - label: Spieluhr / Glockenspiel
+              value: music_box
+            - label: Orgel
+              value: organ
+            - label: 8-Bit / Retro
+              value: chiptune
+    bpm:
+      name: Tempo (BPM, optional)
+      description: Überschreibt optional das Standard-Tempo der Melodie.
+      required: false
+      selector:
+        number:
+          min: 30
+          max: 300
+          step: 1
+          unit_of_measurement: BPM
+          mode: slider
+    reverb:
+      name: Raumhall (Reverb)
+      description: Anteil an natürlichem Raumhall (0.0 bis 1.0).
+      required: false
+      default: 0.25
+      selector:
+        number:
+          min: 0.0
+          max: 1.0
+          step: 0.05
+          mode: slider
+    volume_level:
+      name: Lautstärke (optional)
+      description: Setzt optional die Lautstärke des Ziel-Lautsprechers vor dem Abspielen.
+      required: false
+      selector:
+        number:
+          min: 0.0
+          max: 1.0
+          step: 0.05
+          mode: slider
+    announce:
+      name: Als Durchsage abspielen (Announce)
+      description: Spielt die Melodie als kurze Ankündigung ab.
+      required: false
+      default: true
+      selector:
+        boolean:

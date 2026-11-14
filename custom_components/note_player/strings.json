@@ -1,0 +1,35 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Note Player einrichten",
+        "description": "Konfiguriere optionale Standardwerte für den Instrumenten-Synthesizer. Alle Werte können bei jedem Service-Aufruf überschrieben werden.",
+        "data": {
+          "default_media_player": "Standard-Lautsprecher (optional)",
+          "default_instrument": "Standard-Instrument",
+          "default_bpm": "Standard-Tempo (BPM)",
+          "default_reverb": "Standard-Raumhall (Reverb)",
+          "default_announce": "Standardmäßig als Durchsage (Announce) abspielen"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Note Player ist bereits eingerichtet."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Note Player Standardwerte",
+        "description": "Passe den Standard-Lautsprecher sowie Standard-Instrument, Tempo und Hall an.",
+        "data": {
+          "default_media_player": "Standard-Lautsprecher (optional)",
+          "default_instrument": "Standard-Instrument",
+          "default_bpm": "Standard-Tempo (BPM)",
+          "default_reverb": "Standard-Raumhall (Reverb)",
+          "default_announce": "Standardmäßig als Durchsage (Announce) abspielen"
+        }
+      }
+    }
+  }
+}

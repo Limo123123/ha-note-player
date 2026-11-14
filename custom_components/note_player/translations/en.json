@@ -1,0 +1,35 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Note Player",
+        "description": "Configure optional default values for the instrument synthesizer. All settings can be overridden on every service call.",
+        "data": {
+          "default_media_player": "Default speaker (optional)",
+          "default_instrument": "Default instrument",
+          "default_bpm": "Default tempo (BPM)",
+          "default_reverb": "Default room reverb",
+          "default_announce": "Play as announcement by default"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Note Player is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Note Player Defaults",
+        "description": "Adjust default speaker, instrument, tempo, and reverb.",
+        "data": {
+          "default_media_player": "Default speaker (optional)",
+          "default_instrument": "Default instrument",
+          "default_bpm": "Default tempo (BPM)",
+          "default_reverb": "Default room reverb",
+          "default_announce": "Play as announcement by default"
+        }
+      }
+    }
+  }
+}
