@@ -152,6 +152,22 @@ play_preset:
               value: doorbell_warm
             - label: Erfolgs-Jingle (Harfe)
               value: notification_success
+            - label: Ocarina of Time – Eponas Lied
+              value: oot_epona
+            - label: Ocarina of Time – Sonnenlied
+              value: oot_sun
+            - label: Ocarina of Time – Menuett des Waldes
+              value: oot_minuet
+            - label: Ocarina of Time – Bolero des Feuers
+              value: oot_bolero
+            - label: Ocarina of Time – Serenade des Wassers
+              value: oot_serenade
+            - label: Ocarina of Time – Requiem der Geister
+              value: oot_requiem
+            - label: Ocarina of Time – Nocturne der Schatten
+              value: oot_nocturne
+            - label: Ocarina of Time – Kantate des Lichts
+              value: oot_prelude
     instrument:
       name: Instrument überschreiben (optional)
       description: Optional ein anderes Instrument als das Standard-Instrument des Presets wählen.

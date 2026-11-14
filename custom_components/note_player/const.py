@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 DOMAIN = "note_player"
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 STORAGE_KEY = "note_player_melodies"
 STORAGE_VERSION = 1
@@ -204,6 +204,54 @@ PRESETS: dict[str, dict[str, object]] = {
         "instrument": "harp",
         "bpm": 150,
         "notes": "C5:8 E5:8 G5:8 C6:4",
+    },
+    "oot_epona": {
+        "title": "Ocarina of Time - Eponas Lied",
+        "instrument": "ocarina",
+        "bpm": 110,
+        "notes": "D6:4 B5:4 A5:2 D6:4 B5:4 A5:2",
+    },
+    "oot_sun": {
+        "title": "Ocarina of Time - Sonnenlied",
+        "instrument": "ocarina",
+        "bpm": 120,
+        "notes": "A5:4 F5:4 D6:2 A5:4 F5:4 D6:2",
+    },
+    "oot_minuet": {
+        "title": "Ocarina of Time - Menuett des Waldes",
+        "instrument": "ocarina",
+        "bpm": 110,
+        "notes": "D5:4 D6:4 B5:4 A5:4 B5:4 A5:2",
+    },
+    "oot_bolero": {
+        "title": "Ocarina of Time - Bolero des Feuers",
+        "instrument": "ocarina",
+        "bpm": 120,
+        "notes": "F5:8 D5:8 F5:8 D5:8 A5:8 F5:8 A5:8 F5:2",
+    },
+    "oot_serenade": {
+        "title": "Ocarina of Time - Serenade des Wassers",
+        "instrument": "ocarina",
+        "bpm": 100,
+        "notes": "D5:4 F5:4 A5:4 A5:4 B5:2",
+    },
+    "oot_requiem": {
+        "title": "Ocarina of Time - Requiem der Geister",
+        "instrument": "ocarina",
+        "bpm": 100,
+        "notes": "D5:4 F5:4 D5:4 A5:4 F5:4 D5:2",
+    },
+    "oot_nocturne": {
+        "title": "Ocarina of Time - Nocturne der Schatten",
+        "instrument": "ocarina",
+        "bpm": 100,
+        "notes": "B5:4 A5:4 A5:4 D5:4 B5:4 A5:4 F5:2",
+    },
+    "oot_prelude": {
+        "title": "Ocarina of Time - Kantate des Lichts",
+        "instrument": "ocarina",
+        "bpm": 110,
+        "notes": "D6:4 A5:4 D6:4 A5:4 B5:4 D6:2",
     },
 }
 
