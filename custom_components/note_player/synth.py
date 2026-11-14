@@ -24,7 +24,14 @@ from .const import (
     MAX_RENDER_SECONDS,
     SAMPLE_RATE,
 )
-from .meltysynth import SoundFont, Synthesizer, SynthesizerSettings, create_buffer
+from .meltysynth import (
+    MidiFile,
+    MidiFileSequencer,
+    SoundFont,
+    Synthesizer,
+    SynthesizerSettings,
+    create_buffer,
+)
 
 _BUNDLE_SOUNDFONT_PATH = Path(__file__).resolve().parent / "soundfont" / "TimGM6mb.sf2"
 _CUSTOM_SOUNDFONT_PATH = Path("/config/www/note_player/custom.sf2")
@@ -1061,3 +1068,58 @@ def synthesize_notes(
 
     duration_s = round(total_samples / SAMPLE_RATE, 2)
     return buf.getvalue(), duration_s
+
+
+MAX_MIDI_SECONDS = 300.0
+
+
+def render_midi(midi_bytes: bytes, reverb: float = DEFAULT_REVERB) -> tuple[bytes, float]:
+    """Render a Standard MIDI File with the SoundFont and return (wav_bytes, duration_seconds)."""
+    sound_font = _get_soundfont()
+    if sound_font is None:
+        raise ValueError("Kein SoundFont gefunden - MIDI-Wiedergabe nicht möglich.")
+
+    try:
+        midi = MidiFile(io.BytesIO(midi_bytes))
+    except Exception as err:  # noqa: BLE001
+        raise ValueError(f"Ungültige MIDI-Datei: {err}") from err
+
+    length_s = float(midi.length)
+    if length_s <= 0.0:
+        raise ValueError("MIDI-Datei enthält keine Noten.")
+    if length_s > MAX_MIDI_SECONDS:
+        raise ValueError(
+            f"MIDI-Datei ist zu lang ({length_s:.0f}s, maximal {MAX_MIDI_SECONDS:.0f}s)."
+        )
+
+    settings = SynthesizerSettings(SAMPLE_RATE)
+    settings.enable_reverb_and_chorus = reverb > 0.05
+    synth = Synthesizer(sound_font, settings)
+    sequencer = MidiFileSequencer(synth)
+    sequencer.play(midi, False)
+
+    total = int((length_s + (2.0 if reverb > 0.05 else 0.8)) * SAMPLE_RATE)
+    stereo = np.zeros((2, total), dtype=np.float32)
+    chunk = SAMPLE_RATE
+    pos = 0
+    while pos < total:
+        n = min(chunk, total - pos)
+        left = create_buffer(n)
+        right = create_buffer(n)
+        sequencer.render(left, right)
+        stereo[0, pos : pos + n] = np.asarray(left, dtype=np.float32)
+        stereo[1, pos : pos + n] = np.asarray(right, dtype=np.float32)
+        pos += n
+
+    peak = float(np.max(np.abs(stereo)))
+    if peak > 1e-6:
+        stereo = stereo / peak * 0.9
+
+    pcm16 = np.clip(stereo.T * 32767.0, -32768, 32767).astype("<i2")
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(2)
+        wf.setsampwidth(2)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(pcm16.tobytes())
+    return buf.getvalue(), round(total / SAMPLE_RATE, 2)

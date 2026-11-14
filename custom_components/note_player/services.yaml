@@ -259,6 +259,49 @@ play_preset:
       selector:
         boolean:
 
+play_midi:
+  name: MIDI-Datei abspielen
+  description: Spielt eine .mid-Datei aus /config/www/note_player/midi mit dem SoundFont ab (Vollversionen von Liedern).
+  target:
+    entity:
+      domain: media_player
+  fields:
+    midi_file:
+      name: MIDI-Dateiname
+      description: Dateiname inklusive Endung, z. B. "storms.mid".
+      required: true
+      example: "storms.mid"
+      selector:
+        text:
+    reverb:
+      name: Raumhall (Reverb)
+      description: Raumhall von 0.0 bis 1.0.
+      required: false
+      default: 0.25
+      selector:
+        number:
+          min: 0.0
+          max: 1.0
+          step: 0.05
+          mode: slider
+    volume_level:
+      name: Lautstärke (optional)
+      description: Setzt optional die Lautstärke des Lautsprechers.
+      required: false
+      selector:
+        number:
+          min: 0.0
+          max: 1.0
+          step: 0.05
+          mode: slider
+    announce:
+      name: Als Durchsage abspielen (Announce)
+      description: Spielt als Ankündigung ab.
+      required: false
+      default: false
+      selector:
+        boolean:
+
 save_melody:
   name: Eigene Melodie speichern (für Browse Media)
   description: Speichert eine benannte Melodie dauerhaft, damit sie direkt in Browse Media unter jedem Instrument abrufbar ist.

@@ -16,7 +16,12 @@ from homeassistant.components.media_source import (
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from . import async_ensure_melodies_loaded, async_render_and_cache_wav
+from . import (
+    async_ensure_melodies_loaded,
+    async_list_midi_files,
+    async_render_and_cache_wav,
+    async_render_midi_and_cache,
+)
 from .const import (
     API_AUDIO_BASE_PATH,
     DEFAULT_BPM,
@@ -108,6 +113,15 @@ class NotePlayerMediaSource(MediaSource):
 
         if not ident:
             return self._build_root(custom_melodies)
+
+        if ident == "midi_list":
+            names = await async_list_midi_files(self.hass)
+            children = [self._playable_node(f"midi/{name}", f"🎼 {name}") for name in names]
+            return self._folder_node(
+                "midi_list",
+                "MIDI-Dateien (/config/www/note_player/midi)",
+                children=children,
+            )
 
         if ident == "presets_default":
             children = [
@@ -204,6 +218,10 @@ class NotePlayerMediaSource(MediaSource):
             self._folder_node(
                 "presets_default",
                 "⭐ Eingebaute Melodien (Original-Instrument)",
+            ),
+            self._folder_node(
+                "midi_list",
+                "🎼 MIDI-Dateien (Vollversionen)",
             ),
             self._folder_node(
                 "custom_list",
@@ -359,6 +377,17 @@ class NotePlayerMediaSource(MediaSource):
     async def async_resolve_media(self, item: MediaSourceItem) -> PlayMedia:
         """Synthesize the requested media-source item into a cached WAV URL."""
         ident = (item.identifier or "").strip("/")
+        if ident.startswith("midi/"):
+            try:
+                filename, _dur = await async_render_midi_and_cache(
+                    self.hass,
+                    midi_name=ident.split("/", 1)[1],
+                    reverb=self._get_live_defaults()[3],
+                )
+            except HomeAssistantError as err:
+                raise Unresolvable(str(err)) from err
+            return PlayMedia(url=f"{API_AUDIO_BASE_PATH}/{filename}", mime_type="audio/wav")
+
         notes, instrument, bpm, reverb = await self._resolve_descriptor(ident)
 
         try:

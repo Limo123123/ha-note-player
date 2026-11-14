@@ -91,6 +91,10 @@ Plays one of the 10 built-in melodies (`preset`), optionally overriding `instrum
 
 Both playback services support optional service response data (`SupportsResponse.OPTIONAL`) and fire the `note_player_played` event containing `entity_id`, `instrument`, `bpm`, `duration_s`, and `url`.
 
+### `note_player.play_midi`
+
+Plays a Standard MIDI file (full-length songs) rendered with the SoundFont. Put `.mid` files into `/config/www/note_player/midi/` (max. 300 s). They also appear in **Browse Media → Note Player → MIDI-Dateien**. Fields: `midi_file` (file name), optional `reverb`, `volume_level`, `announce`. Each channel uses the instrument stored in the MIDI file.
+
 ### `note_player.save_melody` & `note_player.delete_melody`
 
 Save or delete named custom melodies (`title`, `notes`, optional `instrument`, optional `bpm`) in persistent Home Assistant storage so they appear immediately in **Browse Media** under every instrument and in *Eigene gespeicherte Melodien*.

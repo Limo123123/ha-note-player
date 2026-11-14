@@ -45,7 +45,7 @@ from .const import (
     STORAGE_VERSION,
     VERSION,
 )
-from .synth import parse_notes, synthesize_notes
+from .synth import parse_notes, render_midi, synthesize_notes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,6 +58,7 @@ PLATFORMS: list[Platform] = [
 
 SERVICE_PLAY_NOTES = "play_notes"
 SERVICE_PLAY_PRESET = "play_preset"
+SERVICE_PLAY_MIDI = "play_midi"
 SERVICE_SAVE_MELODY = "save_melody"
 SERVICE_DELETE_MELODY = "delete_melody"
 
@@ -69,6 +70,7 @@ ATTR_REVERB = "reverb"
 ATTR_VOLUME_LEVEL = "volume_level"
 ATTR_ANNOUNCE = "announce"
 ATTR_PRESET = "preset"
+ATTR_MIDI_FILE = "midi_file"
 ATTR_TITLE = "title"
 ATTR_MELODY_ID = "melody_id"
 
@@ -107,6 +109,18 @@ PLAY_PRESET_SCHEMA = vol.Schema(
         vol.Required(ATTR_PRESET): vol.In(PRESET_IDS),
         vol.Optional(ATTR_INSTRUMENT): vol.In(INSTRUMENT_IDS),
         vol.Optional(ATTR_BPM): vol.All(vol.Coerce(int), vol.Range(min=30, max=300)),
+        vol.Optional(ATTR_REVERB): vol.All(vol.Coerce(float), vol.Range(min=0.0, max=1.0)),
+        vol.Optional(ATTR_VOLUME_LEVEL): vol.All(
+            vol.Coerce(float), vol.Range(min=0.0, max=1.0)
+        ),
+        vol.Optional(ATTR_ANNOUNCE): cv.boolean,
+    }
+)
+
+PLAY_MIDI_SCHEMA = vol.Schema(
+    {
+        **_BASE_TARGET_FIELDS,
+        vol.Required(ATTR_MIDI_FILE): cv.string,
         vol.Optional(ATTR_REVERB): vol.All(vol.Coerce(float), vol.Range(min=0.0, max=1.0)),
         vol.Optional(ATTR_VOLUME_LEVEL): vol.All(
             vol.Coerce(float), vol.Range(min=0.0, max=1.0)
@@ -221,10 +235,15 @@ def _store_audio_cache(hass: HomeAssistant, filename: str, wav_bytes: bytes) -> 
     cache.move_to_end(filename)
     while len(cache) > MAX_AUDIO_CACHE_ITEMS:
         cache.popitem(last=False)
+    # Large MIDI renders: also bound total memory (~150 MB).
+    while len(cache) > 1 and sum(len(v) for v in cache.values()) > 150_000_000:
+        cache.popitem(last=False)
 
 
 def _write_audio_backup(www_dir: Path, filename: str, wav_bytes: bytes) -> None:
     """Write a bounded WAV backup copy under /config/www/note_player."""
+    if len(wav_bytes) > 20_000_000:
+        return
     try:
         www_dir.mkdir(parents=True, exist_ok=True)
         (www_dir / filename).write_bytes(wav_bytes)
@@ -233,6 +252,52 @@ def _write_audio_backup(www_dir: Path, filename: str, wav_bytes: bytes) -> None:
             old_file.unlink(missing_ok=True)
     except OSError as err:
         _LOGGER.debug("Could not write backup WAV to %s: %s", www_dir, err)
+
+
+def midi_dir(hass: HomeAssistant) -> Path:
+    """Directory containing user-provided MIDI files."""
+    return Path(hass.config.path("www", DOMAIN, "midi"))
+
+
+def _list_midi_files(directory: Path) -> list[str]:
+    if not directory.is_dir():
+        return []
+    return sorted(
+        p.name for p in directory.iterdir() if p.is_file() and p.suffix.lower() in (".mid", ".midi")
+    )
+
+
+async def async_list_midi_files(hass: HomeAssistant) -> list[str]:
+    """List available MIDI file names."""
+    return await hass.async_add_executor_job(_list_midi_files, midi_dir(hass))
+
+
+def _read_midi(directory: Path, name: str) -> bytes:
+    if name != Path(name).name or Path(name).suffix.lower() not in (".mid", ".midi"):
+        raise ValueError("Ungültiger MIDI-Dateiname.")
+    path = directory / name
+    if not path.is_file():
+        raise ValueError(f"MIDI-Datei nicht gefunden: {name}")
+    return path.read_bytes()
+
+
+async def async_render_midi_and_cache(
+    hass: HomeAssistant, *, midi_name: str, reverb: float = DEFAULT_REVERB
+) -> tuple[str, float]:
+    """Render a MIDI file from the midi folder, cache it, return (filename, duration_s)."""
+    _ensure_initialized(hass)
+    try:
+        midi_bytes = await hass.async_add_executor_job(_read_midi, midi_dir(hass), midi_name)
+        wav_bytes, duration_s = await hass.async_add_executor_job(render_midi, midi_bytes, reverb)
+    except ValueError as err:
+        raise HomeAssistantError(str(err)) from err
+
+    clip_hash = hashlib.sha256(
+        f"midi:{midi_name}:{reverb:.2f}:{len(midi_bytes)}".encode()
+    ).hexdigest()[:12]
+    filename = f"note_player_midi_{clip_hash}.wav"
+    _store_audio_cache(hass, filename, wav_bytes)
+    return filename, duration_s
 
 
 async def async_render_and_cache_wav(
@@ -325,21 +390,27 @@ async def _play_rendered_audio(
     reverb: float,
     volume_level: float | None,
     announce: bool,
+    midi_name: str | None = None,
 ) -> dict[str, Any]:
-    """Synthesize notes, cache WAV, and stream to target speakers."""
+    """Synthesize notes (or a MIDI file), cache WAV, and stream to target speakers."""
     domain_data = hass.data[DOMAIN]
     options: dict[str, Any] = domain_data.get("options", {})
     default_player = options.get(CONF_DEFAULT_MEDIA_PLAYER)
 
     entity_ids = await _resolve_target_entities(hass, call, default_player)
-    filename, duration_s = await async_render_and_cache_wav(
-        hass,
-        notes=notes,
-        instrument=instrument,
-        bpm=bpm,
-        octave=octave,
-        reverb=reverb,
-    )
+    if midi_name:
+        filename, duration_s = await async_render_midi_and_cache(
+            hass, midi_name=midi_name, reverb=reverb
+        )
+    else:
+        filename, duration_s = await async_render_and_cache_wav(
+            hass,
+            notes=notes,
+            instrument=instrument,
+            bpm=bpm,
+            octave=octave,
+            reverb=reverb,
+        )
 
     base_url = _get_base_url(hass)
     audio_url = f"{base_url}{API_AUDIO_BASE_PATH}/{filename}"
@@ -452,6 +523,29 @@ def _register_services(hass: HomeAssistant) -> None:
             ),
         )
 
+    async def handle_play_midi(call: ServiceCall) -> dict[str, Any]:
+        domain_data = hass.data[DOMAIN]
+        opts: dict[str, Any] = domain_data.get("options", {})
+        return await _play_rendered_audio(
+            hass,
+            call,
+            notes="",
+            instrument=DEFAULT_INSTRUMENT,
+            bpm=DEFAULT_BPM,
+            octave=DEFAULT_OCTAVE,
+            reverb=call.data.get(
+                ATTR_REVERB,
+                domain_data.get("live_reverb")
+                if domain_data.get("live_reverb") is not None
+                else opts.get(CONF_DEFAULT_REVERB, DEFAULT_REVERB),
+            ),
+            volume_level=call.data.get(ATTR_VOLUME_LEVEL),
+            announce=call.data.get(
+                ATTR_ANNOUNCE, opts.get(CONF_DEFAULT_ANNOUNCE, DEFAULT_ANNOUNCE)
+            ),
+            midi_name=call.data[ATTR_MIDI_FILE],
+        )
+
     async def handle_save_melody(call: ServiceCall) -> dict[str, Any]:
         custom_melodies = await async_ensure_melodies_loaded(hass)
         domain_data = hass.data[DOMAIN]
@@ -530,6 +624,15 @@ def _register_services(hass: HomeAssistant) -> None:
             SERVICE_PLAY_PRESET,
             handle_play_preset,
             schema=PLAY_PRESET_SCHEMA,
+            supports_response=SupportsResponse.OPTIONAL,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_PLAY_MIDI):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_PLAY_MIDI,
+            handle_play_midi,
+            schema=PLAY_MIDI_SCHEMA,
             supports_response=SupportsResponse.OPTIONAL,
         )
 
@@ -616,6 +719,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     for service in (
         SERVICE_PLAY_NOTES,
         SERVICE_PLAY_PRESET,
+        SERVICE_PLAY_MIDI,
         SERVICE_SAVE_MELODY,
         SERVICE_DELETE_MELODY,
     ):
