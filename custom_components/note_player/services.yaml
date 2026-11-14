@@ -17,6 +17,8 @@ play_notes:
               value: ocarina
             - label: Querflöte
               value: flute
+            - label: Blockflöte
+              value: recorder
             - label: Panflöte
               value: pan_flute
             - label: Klavier (Flügel)
@@ -27,16 +29,32 @@ play_notes:
               value: guitar
             - label: Westerngitarre (Stahlsaiten)
               value: steel_guitar
-            - label: E-Gitarre
+            - label: E-Gitarre (Clean)
               value: electric_guitar
-            - label: Violine / Streicher
+            - label: Violine
               value: violin
+            - label: Cello
+              value: cello
+            - label: Streicher-Ensemble
+              value: strings
             - label: Harfe
               value: harp
-            - label: Spieluhr / Glockenspiel
+            - label: Spieluhr
               value: music_box
-            - label: Orgel
+            - label: Glockenspiel
+              value: glockenspiel
+            - label: Marimba
+              value: marimba
+            - label: Kirchenorgel
               value: organ
+            - label: Akkordeon
+              value: accordion
+            - label: Trompete
+              value: trumpet
+            - label: Saxophon
+              value: saxophone
+            - label: Chor (Aah)
+              value: choir
             - label: 8-Bit / Retro
               value: chiptune
     notes:
@@ -145,6 +163,8 @@ play_preset:
               value: ocarina
             - label: Querflöte
               value: flute
+            - label: Blockflöte
+              value: recorder
             - label: Panflöte
               value: pan_flute
             - label: Klavier (Flügel)
@@ -155,16 +175,32 @@ play_preset:
               value: guitar
             - label: Westerngitarre (Stahlsaiten)
               value: steel_guitar
-            - label: E-Gitarre
+            - label: E-Gitarre (Clean)
               value: electric_guitar
-            - label: Violine / Streicher
+            - label: Violine
               value: violin
+            - label: Cello
+              value: cello
+            - label: Streicher-Ensemble
+              value: strings
             - label: Harfe
               value: harp
-            - label: Spieluhr / Glockenspiel
+            - label: Spieluhr
               value: music_box
-            - label: Orgel
+            - label: Glockenspiel
+              value: glockenspiel
+            - label: Marimba
+              value: marimba
+            - label: Kirchenorgel
               value: organ
+            - label: Akkordeon
+              value: accordion
+            - label: Trompete
+              value: trumpet
+            - label: Saxophon
+              value: saxophone
+            - label: Chor (Aah)
+              value: choir
             - label: 8-Bit / Retro
               value: chiptune
     bpm:
@@ -235,6 +271,8 @@ save_melody:
               value: ocarina
             - label: Querflöte
               value: flute
+            - label: Blockflöte
+              value: recorder
             - label: Panflöte
               value: pan_flute
             - label: Klavier (Flügel)
@@ -245,16 +283,32 @@ save_melody:
               value: guitar
             - label: Westerngitarre (Stahlsaiten)
               value: steel_guitar
-            - label: E-Gitarre
+            - label: E-Gitarre (Clean)
               value: electric_guitar
-            - label: Violine / Streicher
+            - label: Violine
               value: violin
+            - label: Cello
+              value: cello
+            - label: Streicher-Ensemble
+              value: strings
             - label: Harfe
               value: harp
-            - label: Spieluhr / Glockenspiel
+            - label: Spieluhr
               value: music_box
-            - label: Orgel
+            - label: Glockenspiel
+              value: glockenspiel
+            - label: Marimba
+              value: marimba
+            - label: Kirchenorgel
               value: organ
+            - label: Akkordeon
+              value: accordion
+            - label: Trompete
+              value: trumpet
+            - label: Saxophon
+              value: saxophone
+            - label: Chor (Aah)
+              value: choir
             - label: 8-Bit / Retro
               value: chiptune
     bpm:

@@ -3,18 +3,18 @@
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-**Note Player** (`note_player`) is a Home Assistant custom integration that parses musical notes, chords, rests, and RTTTL ringtone strings, synthesizes realistic stereo WAV audio locally in Python/NumPy across **13 instruments**, and plays them directly on any Home Assistant `media_player` entity (e.g., Sonos, Nest/Google Cast, Music Assistant, Squeezebox, or DLNA speakers).
+**Note Player** (`note_player`) is a Home Assistant custom integration that parses musical notes, chords, rests, and RTTTL ringtone strings, synthesizes realistic stereo WAV audio locally using a bundled **SoundFont 2 engine** (`py-meltysynth` + `TimGM6mb.sf2`) across **22 sampled instruments**, and plays them directly on any Home Assistant `media_player` entity (e.g., Sonos, Nest/Google Cast, Music Assistant, Squeezebox, or DLNA speakers).
 
-> **Note:** Completely offline and local — no external TTS/cloud APIs or pre-recorded sound files required.
+> **Note:** Completely offline and local — no external TTS/cloud APIs or C libraries required.
 
 ---
 
 ## Features
 
-- **13 Synthesized Instruments** using physical modeling, additive synthesis, FM/modal synthesis, Karplus-Strong plucked strings, and 8-bit retro waveforms:
-  - Wind: `ocarina` (Ocarina), `flute` (Flute), `pan_flute` (Pan Flute)
-  - Keys: `piano` (Grand Piano), `epiano` (Electric Piano / Rhodes), `organ` (Organ), `music_box` (Music Box / Glockenspiel)
-  - Plucked / Bowed Strings: `guitar` (Acoustic Nylon Guitar), `steel_guitar` (Steel-String Guitar), `electric_guitar` (Electric Guitar), `harp` (Harp), `violin` (Violin)
+- **22 Sampled SoundFont 2 Instruments** (with automatic fallback procedural synthesis, treble presence EQ, and optional custom `/config/www/note_player/custom.sf2` SoundFont support):
+  - Wind & Brass: `ocarina` (Ocarina), `flute` (Flute), `recorder` (Recorder), `pan_flute` (Pan Flute), `trumpet` (Trumpet), `saxophone` (Saxophone)
+  - Keys & Mallets: `piano` (Grand Piano), `epiano` (Electric Piano / Rhodes), `organ` (Church Organ), `accordion` (Accordion), `music_box` (Music Box), `glockenspiel` (Glockenspiel), `marimba` (Marimba)
+  - Strings & Choir: `guitar` (Acoustic Nylon Guitar), `steel_guitar` (Steel-String Guitar), `electric_guitar` (Clean Electric Guitar), `harp` (Harp), `violin` (Violin), `cello` (Cello), `strings` (String Ensemble), `choir` (Choir Aahs)
   - Synth: `chiptune` (8-Bit Chiptune)
 - **Flexible Note Notation**:
   - Standard pitch + octave + duration (e.g. `A4:4 D4:2 F4:4`)
@@ -26,7 +26,7 @@
 - **10 Built-in Presets**: `zelda_song_of_time`, `zelda_lullaby`, `zelda_sarias_song`, `zelda_storms`, `zelda_secret`, `fur_elise`, `spanish_romance`, `morning_mood`, `doorbell_warm`, `notification_success`
 - **Native Browse Media Integration (`media_source` + `tts`)**:
   - Open **Browse Media** on any `media_player` entity (or in the **Media** sidebar) and choose **Note Player (Instrumente & Melodien)** to browse by instrument, play presets, chords, riffs, single notes, saved melodies, or your live input notes directly on that exact speaker.
-  - Or open **Browse Media → Text-to-Speech → Note Player (Noten-Eingabe)** right inside the speaker dialog to type arbitrary notes (`A4:4 D4:2 F4:4` or `bpm=140 C4+E4+G4:2`), choose any of the 13 instruments from the dropdown, and hit Play!
+  - Or open **Browse Media → Text-to-Speech → Note Player (Noten-Eingabe)** right inside the speaker dialog to type arbitrary notes (`A5:4 D5:2 F5:4` or `bpm=140 C4+E4+G4:2`), choose any of the 22 instruments from the dropdown, and hit Play!
 - **Interactive Dashboard Entities**: Creates `text`, `select`, and `number` entities (`Noten-Eingabe`, `Instrument`, `Tempo (BPM)`, `Raumhall (Reverb)`) plus persistent custom melodies (`save_melody` / `delete_melody`).
 - **Built-in HTTP Audio Serving + Caching**: Serves synthesized 16-bit 44.1 kHz stereo WAV files directly from `/api/note_player/audio/{filename}` (with `HEAD`, `GET`, HTTP byte-range support, and `/config/www/note_player` backup), plus optional `announce` mode with automatic fallback if a speaker rejects `announce: true`.
 - **UI Configuration & Options Flow**: Configure default speaker, instrument, BPM, reverb, and announce behavior via the Home Assistant UI.
@@ -166,20 +166,29 @@ data:
 ## Instruments & Presets
 
 <details>
-<summary>All 13 Instrument IDs</summary>
+<summary>All 22 Instrument IDs</summary>
 
 - `ocarina` — Ocarina
 - `flute` — Flute
+- `recorder` — Recorder
 - `pan_flute` — Pan Flute
 - `piano` — Grand Piano
 - `epiano` — Electric Piano (Rhodes)
 - `guitar` — Acoustic Guitar (Nylon)
 - `steel_guitar` — Steel-String Guitar
-- `electric_guitar` — Electric Guitar
+- `electric_guitar` — Electric Guitar (Clean)
 - `violin` — Violin
+- `cello` — Cello
+- `strings` — String Ensemble
 - `harp` — Harp
-- `music_box` — Music Box / Glockenspiel
-- `organ` — Organ
+- `music_box` — Music Box
+- `glockenspiel` — Glockenspiel
+- `marimba` — Marimba
+- `organ` — Church Organ
+- `accordion` — Accordion
+- `trumpet` — Trumpet
+- `saxophone` — Saxophone
+- `choir` — Choir Aahs
 - `chiptune` — 8-Bit Chiptune
 
 </details>
@@ -204,7 +213,8 @@ data:
 
 ## Technical Notes
 
-- Audio is synthesized in memory (`44100 Hz`, 16-bit stereo PCM WAV, peak-normalized with gentle soft limiting) and cached (up to `20` items in memory + `/config/www/note_player` disk backup).
+- Audio is synthesized in memory (`44100 Hz`, 16-bit stereo PCM WAV) via pure-Python SoundFont 2 rendering ([sinshu/py-meltysynth](https://github.com/sinshu/py-meltysynth), MIT License) using the bundled `TimGM6mb.sf2` bank, treble presence EQ, and peak normalization + caching (up to `20` items in memory + `/config/www/note_player` disk backup).
+- You can optionally drop your own `.sf2` file at `/config/www/note_player/custom.sf2` to override the bundled SoundFont.
 - Maximum render length per call is capped at `90` seconds (`MAX_RENDER_SECONDS`) to prevent accidental resource exhaustion.
 - Ensure your Home Assistant instance has a reachable internal/external URL configured (`Settings → System → Network`) so target speakers can fetch `/api/note_player/audio/{filename}`.
 

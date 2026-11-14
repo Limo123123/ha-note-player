@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 DOMAIN = "note_player"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 STORAGE_KEY = "note_player_melodies"
 STORAGE_VERSION = 1
@@ -21,64 +23,122 @@ DEFAULT_DURATION = 4
 DEFAULT_REVERB = 0.25
 DEFAULT_INSTRUMENT = "ocarina"
 DEFAULT_ANNOUNCE = True
-DEFAULT_LIVE_NOTES = "A4:4 D4:2 F4:4 A4:4 D4:2 F4:4"
+DEFAULT_LIVE_NOTES = "A5:4 D5:2 F5:4 A5:4 D5:2 F5:4"
 
 SAMPLE_RATE = 44100
 MAX_AUDIO_CACHE_ITEMS = 20
 MAX_RENDER_SECONDS = 90.0
 
-INSTRUMENTS: dict[str, dict[str, str]] = {
+INSTRUMENTS: dict[str, dict[str, Any]] = {
     "ocarina": {
         "name_de": "Okarina",
         "name_en": "Ocarina",
+        "gm_program": 79,
     },
     "flute": {
         "name_de": "Querflöte",
         "name_en": "Flute",
+        "gm_program": 73,
+    },
+    "recorder": {
+        "name_de": "Blockflöte",
+        "name_en": "Recorder",
+        "gm_program": 74,
     },
     "pan_flute": {
         "name_de": "Panflöte",
         "name_en": "Pan Flute",
+        "gm_program": 75,
     },
     "piano": {
         "name_de": "Klavier (Flügel)",
         "name_en": "Grand Piano",
+        "gm_program": 0,
     },
     "epiano": {
         "name_de": "E-Piano (Rhodes)",
         "name_en": "Electric Piano",
+        "gm_program": 4,
     },
     "guitar": {
         "name_de": "Akustik-Gitarre (Nylon)",
         "name_en": "Acoustic Guitar (Nylon)",
+        "gm_program": 24,
     },
     "steel_guitar": {
         "name_de": "Westerngitarre (Stahlsaiten)",
         "name_en": "Steel-String Guitar",
+        "gm_program": 25,
     },
     "electric_guitar": {
-        "name_de": "E-Gitarre",
+        "name_de": "E-Gitarre (Clean)",
         "name_en": "Electric Guitar",
+        "gm_program": 27,
     },
     "violin": {
-        "name_de": "Violine / Streicher",
+        "name_de": "Violine",
         "name_en": "Violin",
+        "gm_program": 40,
+    },
+    "cello": {
+        "name_de": "Cello",
+        "name_en": "Cello",
+        "gm_program": 42,
+    },
+    "strings": {
+        "name_de": "Streicher-Ensemble",
+        "name_en": "String Ensemble",
+        "gm_program": 48,
     },
     "harp": {
         "name_de": "Harfe",
         "name_en": "Harp",
+        "gm_program": 46,
     },
     "music_box": {
-        "name_de": "Spieluhr / Glockenspiel",
-        "name_en": "Music Box / Glockenspiel",
+        "name_de": "Spieluhr",
+        "name_en": "Music Box",
+        "gm_program": 10,
+    },
+    "glockenspiel": {
+        "name_de": "Glockenspiel",
+        "name_en": "Glockenspiel",
+        "gm_program": 9,
+    },
+    "marimba": {
+        "name_de": "Marimba",
+        "name_en": "Marimba",
+        "gm_program": 12,
     },
     "organ": {
-        "name_de": "Orgel",
-        "name_en": "Organ",
+        "name_de": "Kirchenorgel",
+        "name_en": "Church Organ",
+        "gm_program": 19,
+    },
+    "accordion": {
+        "name_de": "Akkordeon",
+        "name_en": "Accordion",
+        "gm_program": 21,
+    },
+    "trumpet": {
+        "name_de": "Trompete",
+        "name_en": "Trumpet",
+        "gm_program": 56,
+    },
+    "saxophone": {
+        "name_de": "Saxophon",
+        "name_en": "Saxophone",
+        "gm_program": 65,
+    },
+    "choir": {
+        "name_de": "Chor (Aah)",
+        "name_en": "Choir Aahs",
+        "gm_program": 52,
     },
     "chiptune": {
         "name_de": "8-Bit / Retro",
         "name_en": "8-Bit Chiptune",
+        "gm_program": 80,
     },
 }
 
@@ -89,25 +149,25 @@ PRESETS: dict[str, dict[str, object]] = {
         "title": "Zelda - Hymne der Zeit (Song of Time)",
         "instrument": "ocarina",
         "bpm": 110,
-        "notes": "A4:4 D4:2 F4:4 A4:4 D4:2 F4:4 A4:8 C5:8 B4:4 G4:4 F4:8 G4:8 A4:4 D4:4 C4:8 E4:8 D4:1",
+        "notes": "A5:4 D5:2 F5:4 A5:4 D5:2 F5:4 A5:8 C6:8 B5:4 G5:4 F5:8 G5:8 A5:4 D5:4 C5:8 E5:8 D5:1",
     },
     "zelda_lullaby": {
         "title": "Zelda - Zeldas Wiegenlied (Zelda's Lullaby)",
         "instrument": "ocarina",
         "bpm": 108,
-        "notes": "B4:2 D5:4 A4:2 G4:8 A4:8 B4:2 D5:4 A4:1 B4:2 D5:4 A5:2 G5:4 D5:2 C5:8 B4:8 A4:1",
+        "notes": "B5:2 D6:4 A5:2 G5:8 A5:8 B5:2 D6:4 A5:1 B5:2 D6:4 A6:2 G6:4 D6:2 C6:8 B5:8 A5:1",
     },
     "zelda_sarias_song": {
         "title": "Zelda - Salias Lied (Saria's Song)",
         "instrument": "ocarina",
         "bpm": 140,
-        "notes": "F4:8 A4:8 B4:4 F4:8 A4:8 B4:4 F4:8 A4:8 B4:8 E5:8 D5:4 B4:8 C5:8 B4:8 G4:8 E4:2.",
+        "notes": "F5:8 A5:8 B5:4 F5:8 A5:8 B5:4 F5:8 A5:8 B5:8 E6:8 D6:4 B5:8 C6:8 B5:8 G5:8 E5:2.",
     },
     "zelda_storms": {
         "title": "Zelda - Hymne des Sturms (Song of Storms)",
         "instrument": "ocarina",
         "bpm": 160,
-        "notes": "D4:8 F4:8 D5:2 D4:8 F4:8 D5:2 E5:4. F5:8 E5:8 F5:8 E5:8 C5:8 A4:2.",
+        "notes": "D5:8 F5:8 D6:2 D5:8 F5:8 D6:2 E6:4. F6:8 E6:8 F6:8 E6:8 C6:8 A5:2.",
     },
     "zelda_secret": {
         "title": "Zelda - Geheimnis entdeckt (Secret Chime)",

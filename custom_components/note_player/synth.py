@@ -6,8 +6,10 @@ from dataclasses import dataclass
 import hashlib
 import io
 import math
+from pathlib import Path
 import re
 import struct
+import threading
 import wave
 
 import numpy as np
@@ -22,6 +24,12 @@ from .const import (
     MAX_RENDER_SECONDS,
     SAMPLE_RATE,
 )
+from .meltysynth import SoundFont, Synthesizer, SynthesizerSettings, create_buffer
+
+_BUNDLE_SOUNDFONT_PATH = Path(__file__).resolve().parent / "soundfont" / "TimGM6mb.sf2"
+_CUSTOM_SOUNDFONT_PATH = Path("/config/www/note_player/custom.sf2")
+_SOUNDFONT_LOCK = threading.Lock()
+_SOUNDFONT_CACHE: dict[str, tuple[float, SoundFont]] = {}
 
 # Semitone offsets from C (supports international B/Bb as well as German H).
 BASE_SEMITONES: dict[str, int] = {
@@ -717,30 +725,212 @@ def _synth_chiptune(freq: float, dur_s: float) -> np.ndarray:
     return sig * env * 0.55
 
 
+_PROCEDURAL_ALIASES: dict[str, str] = {
+    "recorder": "ocarina",
+    "glockenspiel": "music_box",
+    "marimba": "music_box",
+    "cello": "violin",
+    "strings": "violin",
+    "trumpet": "organ",
+    "saxophone": "flute",
+    "accordion": "organ",
+    "choir": "organ",
+}
+
+
 def _render_single_note(
     instrument: str,
     midi: int,
     dur_s: float,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """Dispatch single-note synthesis cleanly by instrument profile."""
+    """Dispatch procedural single-note synthesis cleanly by instrument profile."""
+    resolved = _PROCEDURAL_ALIASES.get(instrument, instrument)
     freq = midi_to_freq(midi)
-    if instrument in WIND_PROFILES:
-        return _synth_wind(freq, dur_s, WIND_PROFILES[instrument], rng)
-    if instrument in PLUCKED_PROFILES:
-        return _synth_plucked(freq, dur_s, PLUCKED_PROFILES[instrument], rng)
-    if instrument in MODAL_PROFILES:
-        return _synth_modal(freq, dur_s, MODAL_PROFILES[instrument], rng)
+    if resolved in WIND_PROFILES:
+        return _synth_wind(freq, dur_s, WIND_PROFILES[resolved], rng)
+    if resolved in PLUCKED_PROFILES:
+        return _synth_plucked(freq, dur_s, PLUCKED_PROFILES[resolved], rng)
+    if resolved in MODAL_PROFILES:
+        return _synth_modal(freq, dur_s, MODAL_PROFILES[resolved], rng)
     return _synth_chiptune(freq, dur_s)
 
 
 def _strum_step_for(instrument: str) -> float:
     """Return chord strum arpeggiation spacing in seconds (0 if simultaneous)."""
-    if instrument in PLUCKED_PROFILES:
-        return PLUCKED_PROFILES[instrument].strum_step_s
-    if instrument in MODAL_PROFILES:
-        return MODAL_PROFILES[instrument].strum_step_s
+    resolved = _PROCEDURAL_ALIASES.get(instrument, instrument)
+    if resolved in PLUCKED_PROFILES:
+        return PLUCKED_PROFILES[resolved].strum_step_s
+    if resolved in MODAL_PROFILES:
+        return MODAL_PROFILES[resolved].strum_step_s
     return 0.0
+
+
+def _get_soundfont() -> SoundFont | None:
+    """Load and cache the SoundFont (custom override if present, else bundled TimGM6mb.sf2)."""
+    sf_path: Path | None = None
+    if _CUSTOM_SOUNDFONT_PATH.is_file():
+        sf_path = _CUSTOM_SOUNDFONT_PATH
+    elif _BUNDLE_SOUNDFONT_PATH.is_file():
+        sf_path = _BUNDLE_SOUNDFONT_PATH
+
+    if sf_path is None:
+        return None
+
+    key = str(sf_path)
+    mtime = sf_path.stat().st_mtime
+    with _SOUNDFONT_LOCK:
+        cached = _SOUNDFONT_CACHE.get(key)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+        sf = SoundFont.from_file(key)
+        _SOUNDFONT_CACHE.clear()
+        _SOUNDFONT_CACHE[key] = (mtime, sf)
+        return sf
+
+
+def _apply_presence_eq(stereo: np.ndarray) -> np.ndarray:
+    """Apply linear-phase sub-bass cleanup and bright presence boost for smart speakers."""
+    n = stereo.shape[1]
+    if n < 64:
+        return stereo
+
+    fft_n = 1 << int(math.ceil(math.log2(n)))
+    freqs = np.fft.rfftfreq(fft_n, 1.0 / SAMPLE_RATE)
+
+    # Clean sub-60 Hz mud without thinning out acoustic fundamentals.
+    sub_hp = np.clip((freqs - 45.0) / 45.0, 0.0, 1.0)
+    # Smooth +3.5 dB presence/air shelf above ~1.4 kHz for crisp ocarina/flute/strings.
+    shelf = 0.5 - 0.5 * np.cos(math.pi * np.clip((freqs - 1200.0) / 1800.0, 0.0, 1.0))
+    presence = 1.0 + 0.45 * shelf
+    # Gentle air rolloff above 15 kHz.
+    top_taper = 1.0 - 0.15 * np.clip((freqs - 15000.0) / 5000.0, 0.0, 1.0)
+    eq_curve = sub_hp * presence * top_taper
+
+    out = np.empty_like(stereo)
+    for ch in range(2):
+        spec = np.fft.rfft(stereo[ch], fft_n)
+        out[ch] = np.fft.irfft(spec * eq_curve, fft_n)[:n]
+    return out
+
+
+def _render_with_soundfont(
+    sound_font: SoundFont,
+    events: list[NoteEvent],
+    instrument: str,
+    bpm: int,
+    reverb: float,
+) -> np.ndarray | None:
+    """Render events via pure-Python SoundFont 2 synthesis (py-meltysynth)."""
+    all_midis = sorted(m for ev in events for m in ev.midis)
+    if not all_midis:
+        return None
+
+    # Brighten soprano instruments if input was written in low/default octave (< C5).
+    transpose = 0
+    if instrument in {"ocarina", "music_box", "glockenspiel"}:
+        median_midi = all_midis[len(all_midis) // 2]
+        if median_midi < 72:
+            transpose = 12
+
+    sec_per_beat = 60.0 / max(30, min(300, bpm))
+    lead_samples = int(0.08 * SAMPLE_RATE)
+    tail_samples = int((1.10 if reverb > 0.05 else 0.45) * SAMPLE_RATE)
+    max_body_samples = int(MAX_RENDER_SECONDS * SAMPLE_RATE)
+
+    is_plucked = instrument in {"guitar", "steel_guitar", "electric_guitar", "harp"}
+    strum_samples = int(0.018 * SAMPLE_RATE) if is_plucked else 0
+    staccato_wind = instrument in {
+        "ocarina",
+        "flute",
+        "pan_flute",
+        "recorder",
+        "violin",
+        "cello",
+        "strings",
+        "organ",
+        "accordion",
+        "trumpet",
+        "saxophone",
+        "choir",
+        "chiptune",
+    }
+
+    # Timeline tuples: (sample_idx, order_flag [0=off, 1=on], midi, velocity).
+    midi_msgs: list[tuple[int, int, int, int]] = []
+    cursor_s = 0.0
+    last_off_sample = lead_samples
+
+    for event in events:
+        dur_s = max(0.04, event.beats * sec_per_beat)
+        if cursor_s >= MAX_RENDER_SECONDS:
+            break
+        if event.midis:
+            gate_s = dur_s * 0.93 if (staccato_wind and dur_s > 0.14) else max(0.035, dur_s - 0.012)
+            vel = 114 if len(event.midis) == 1 else 104
+            for idx, raw_midi in enumerate(event.midis):
+                midi = max(21, min(108, raw_midi + transpose))
+                on_sample = lead_samples + int(round(cursor_s * SAMPLE_RATE)) + idx * strum_samples
+                off_sample = min(
+                    lead_samples + max_body_samples,
+                    on_sample + max(int(0.03 * SAMPLE_RATE), int(round(gate_s * SAMPLE_RATE))),
+                )
+                midi_msgs.append((on_sample, 1, midi, vel))
+                midi_msgs.append((off_sample, 0, midi, 0))
+                last_off_sample = max(last_off_sample, off_sample)
+        cursor_s += dur_s
+
+    if not midi_msgs:
+        return None
+
+    midi_msgs.sort(key=lambda item: (item[0], item[1]))
+    total_samples = min(
+        last_off_sample + tail_samples,
+        int((MAX_RENDER_SECONDS + 2.0) * SAMPLE_RATE),
+    )
+
+    settings = SynthesizerSettings(SAMPLE_RATE)
+    settings.enable_reverb_and_chorus = True
+    synth = Synthesizer(sound_font, settings)
+
+    gm_program = int(INSTRUMENTS[instrument].get("gm_program", 0))
+    synth.process_midi_message(0, 0xC0, gm_program, 0)
+    synth.process_midi_message(0, 0xB0, 7, 127)
+    reverb_cc = max(0, min(127, int(round(max(0.0, min(1.0, float(reverb))) * 115))))
+    synth.process_midi_message(0, 0xB0, 91, reverb_cc)
+    chorus_cc = 28 if instrument in {"strings", "choir", "epiano", "organ", "electric_guitar"} else 8
+    synth.process_midi_message(0, 0xB0, 93, chorus_cc)
+    if instrument in {"ocarina", "flute", "pan_flute", "recorder", "violin", "cello", "trumpet", "saxophone"}:
+        synth.process_midi_message(0, 0xB0, 1, 20)
+
+    stereo = np.zeros((2, total_samples), dtype=np.float64)
+    cursor = 0
+
+    for msg_sample, msg_type, midi, vel in midi_msgs:
+        clamped = min(msg_sample, total_samples)
+        if clamped > cursor:
+            chunk = clamped - cursor
+            left = create_buffer(chunk)
+            right = create_buffer(chunk)
+            synth.render(left, right)
+            stereo[0, cursor:clamped] = np.asarray(left, dtype=np.float64)
+            stereo[1, cursor:clamped] = np.asarray(right, dtype=np.float64)
+            cursor = clamped
+
+        if msg_type == 1:
+            synth.note_on(0, midi, vel)
+        else:
+            synth.note_off(0, midi)
+
+    if total_samples > cursor:
+        chunk = total_samples - cursor
+        left = create_buffer(chunk)
+        right = create_buffer(chunk)
+        synth.render(left, right)
+        stereo[0, cursor:total_samples] = np.asarray(left, dtype=np.float64)
+        stereo[1, cursor:total_samples] = np.asarray(right, dtype=np.float64)
+
+    return _apply_presence_eq(stereo)
 
 
 def _apply_stereo_reverb(stereo: np.ndarray, reverb: float, rng: np.random.Generator) -> np.ndarray:
@@ -795,56 +985,64 @@ def synthesize_notes(
         bpm=bpm,
     )
 
-    sec_per_beat = 60.0 / max(30, min(300, resolved_bpm))
-    lead_pad_s = 0.15
-    tail_pad_s = 0.90 if reverb > 0.05 else 0.35
+    sound_font = _get_soundfont()
+    stereo: np.ndarray | None = None
+    if sound_font is not None:
+        stereo = _render_with_soundfont(sound_font, events, instrument, resolved_bpm, reverb)
 
-    # Compute deterministic seed so identical note requests sound identical & cache cleanly.
-    seed_bytes = hashlib.sha256(f"{instrument}:{resolved_bpm}:{notes}".encode()).digest()[:8]
-    rng = np.random.default_rng(int.from_bytes(seed_bytes, "big"))
+    if stereo is not None:
+        total_samples = stereo.shape[1]
+    else:
+        sec_per_beat = 60.0 / max(30, min(300, resolved_bpm))
+        lead_pad_s = 0.15
+        tail_pad_s = 0.90 if reverb > 0.05 else 0.35
 
-    # Schedule note renders within MAX_RENDER_SECONDS.
-    scheduled: list[tuple[int, np.ndarray, float]] = []
-    cursor_s = lead_pad_s
-    strum_step = _strum_step_for(instrument)
-    max_sample = 0
+        # Compute deterministic seed so identical note requests sound identical & cache cleanly.
+        seed_bytes = hashlib.sha256(f"{instrument}:{resolved_bpm}:{notes}".encode()).digest()[:8]
+        rng = np.random.default_rng(int.from_bytes(seed_bytes, "big"))
 
-    for event in events:
-        dur_s = max(0.04, event.beats * sec_per_beat)
-        if cursor_s >= MAX_RENDER_SECONDS:
-            break
-        if event.midis:
-            num_voices = len(event.midis)
-            chord_scale = 1.0 / math.sqrt(num_voices)
-            for idx, midi in enumerate(event.midis):
-                onset_s = cursor_s + idx * strum_step
-                # Slight natural duration reduction for staccato articulation on pure wind tones.
-                render_dur = dur_s * 0.94 if (instrument in WIND_PROFILES and dur_s > 0.18) else dur_s
-                voice = _render_single_note(instrument, midi, render_dur, rng) * chord_scale
-                start_idx = int(round(onset_s * SAMPLE_RATE))
-                end_idx = start_idx + voice.shape[0]
-                max_sample = max(max_sample, end_idx)
-                pan = 0.0 if num_voices == 1 else -0.22 + 0.44 * (idx / max(1, num_voices - 1))
-                scheduled.append((start_idx, voice, pan))
-        cursor_s += dur_s
+        # Schedule note renders within MAX_RENDER_SECONDS.
+        scheduled: list[tuple[int, np.ndarray, float]] = []
+        cursor_s = lead_pad_s
+        strum_step = _strum_step_for(instrument)
+        max_sample = 0
 
-    if not scheduled:
-        raise ValueError("Keine Noten innerhalb der maximalen Render-Dauer gefunden.")
+        for event in events:
+            dur_s = max(0.04, event.beats * sec_per_beat)
+            if cursor_s >= MAX_RENDER_SECONDS:
+                break
+            if event.midis:
+                num_voices = len(event.midis)
+                chord_scale = 1.0 / math.sqrt(num_voices)
+                for idx, midi in enumerate(event.midis):
+                    onset_s = cursor_s + idx * strum_step
+                    # Slight natural duration reduction for staccato articulation on pure wind tones.
+                    render_dur = dur_s * 0.94 if (instrument in WIND_PROFILES and dur_s > 0.18) else dur_s
+                    voice = _render_single_note(instrument, midi, render_dur, rng) * chord_scale
+                    start_idx = int(round(onset_s * SAMPLE_RATE))
+                    end_idx = start_idx + voice.shape[0]
+                    max_sample = max(max_sample, end_idx)
+                    pan = 0.0 if num_voices == 1 else -0.22 + 0.44 * (idx / max(1, num_voices - 1))
+                    scheduled.append((start_idx, voice, pan))
+            cursor_s += dur_s
 
-    total_samples = max(max_sample, int(round((cursor_s + tail_pad_s) * SAMPLE_RATE)))
-    total_samples = min(total_samples, int((MAX_RENDER_SECONDS + 2.0) * SAMPLE_RATE))
-    stereo = np.zeros((2, total_samples), dtype=np.float64)
+        if not scheduled:
+            raise ValueError("Keine Noten innerhalb der maximalen Render-Dauer gefunden.")
 
-    for start_idx, voice, pan in scheduled:
-        if start_idx >= total_samples:
-            continue
-        take = min(voice.shape[0], total_samples - start_idx)
-        gain_l = math.cos((pan + 1.0) * math.pi / 4.0)
-        gain_r = math.sin((pan + 1.0) * math.pi / 4.0)
-        stereo[0, start_idx : start_idx + take] += gain_l * voice[:take]
-        stereo[1, start_idx : start_idx + take] += gain_r * voice[:take]
+        total_samples = max(max_sample, int(round((cursor_s + tail_pad_s) * SAMPLE_RATE)))
+        total_samples = min(total_samples, int((MAX_RENDER_SECONDS + 2.0) * SAMPLE_RATE))
+        stereo = np.zeros((2, total_samples), dtype=np.float64)
 
-    stereo = _apply_stereo_reverb(stereo, reverb, rng)
+        for start_idx, voice, pan in scheduled:
+            if start_idx >= total_samples:
+                continue
+            take = min(voice.shape[0], total_samples - start_idx)
+            gain_l = math.cos((pan + 1.0) * math.pi / 4.0)
+            gain_r = math.sin((pan + 1.0) * math.pi / 4.0)
+            stereo[0, start_idx : start_idx + take] += gain_l * voice[:take]
+            stereo[1, start_idx : start_idx + take] += gain_r * voice[:take]
+
+        stereo = _apply_stereo_reverb(stereo, reverb, rng)
 
     # Gentle soft-clipping headroom + normalization.
     peak = float(np.max(np.abs(stereo)))
