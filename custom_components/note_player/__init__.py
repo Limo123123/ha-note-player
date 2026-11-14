@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from aiohttp import web
+import aiohttp
 import voluptuous as vol
 
 from homeassistant.components.http import HomeAssistantView
@@ -17,6 +18,7 @@ from homeassistant.const import ATTR_ENTITY_ID, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 from homeassistant.helpers.storage import Store
@@ -59,6 +61,7 @@ PLATFORMS: list[Platform] = [
 SERVICE_PLAY_NOTES = "play_notes"
 SERVICE_PLAY_PRESET = "play_preset"
 SERVICE_PLAY_MIDI = "play_midi"
+SERVICE_DOWNLOAD_MIDI = "download_midi"
 SERVICE_SAVE_MELODY = "save_melody"
 SERVICE_DELETE_MELODY = "delete_melody"
 
@@ -71,6 +74,8 @@ ATTR_VOLUME_LEVEL = "volume_level"
 ATTR_ANNOUNCE = "announce"
 ATTR_PRESET = "preset"
 ATTR_MIDI_FILE = "midi_file"
+ATTR_URL = "url"
+ATTR_FILENAME = "filename"
 ATTR_TITLE = "title"
 ATTR_MELODY_ID = "melody_id"
 
@@ -126,6 +131,13 @@ PLAY_MIDI_SCHEMA = vol.Schema(
             vol.Coerce(float), vol.Range(min=0.0, max=1.0)
         ),
         vol.Optional(ATTR_ANNOUNCE): cv.boolean,
+    }
+)
+
+DOWNLOAD_MIDI_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_URL): cv.url,
+        vol.Optional(ATTR_FILENAME): cv.string,
     }
 )
 
@@ -255,39 +267,52 @@ def _write_audio_backup(www_dir: Path, filename: str, wav_bytes: bytes) -> None:
 
 
 def midi_dir(hass: HomeAssistant) -> Path:
-    """Directory containing user-provided MIDI files."""
+    """Directory for MIDI files saved by Note Player (download_midi)."""
     return Path(hass.config.path("www", DOMAIN, "midi"))
 
 
-def _list_midi_files(directory: Path) -> list[str]:
-    if not directory.is_dir():
-        return []
-    return sorted(
-        p.name for p in directory.iterdir() if p.is_file() and p.suffix.lower() in (".mid", ".midi")
-    )
+def _midi_dirs(hass: HomeAssistant) -> list[Path]:
+    """Directories scanned for MIDI files: own folder plus HA media folders (upload via Media panel)."""
+    dirs = [midi_dir(hass)]
+    for media_path in getattr(hass.config, "media_dirs", {}).values():
+        dirs.append(Path(media_path))
+    return dirs
+
+
+def _list_midi_files(dirs: list[Path]) -> list[str]:
+    names: set[str] = set()
+    for directory in dirs:
+        if not directory.is_dir():
+            continue
+        for p in directory.rglob("*"):
+            if p.is_file() and p.suffix.lower() in (".mid", ".midi"):
+                names.add(p.relative_to(directory).as_posix())
+    return sorted(names)
 
 
 async def async_list_midi_files(hass: HomeAssistant) -> list[str]:
-    """List available MIDI file names."""
-    return await hass.async_add_executor_job(_list_midi_files, midi_dir(hass))
+    """List available MIDI file names (relative paths)."""
+    return await hass.async_add_executor_job(_list_midi_files, _midi_dirs(hass))
 
 
-def _read_midi(directory: Path, name: str) -> bytes:
-    if name != Path(name).name or Path(name).suffix.lower() not in (".mid", ".midi"):
-        raise ValueError("Ungültiger MIDI-Dateiname.")
-    path = directory / name
-    if not path.is_file():
-        raise ValueError(f"MIDI-Datei nicht gefunden: {name}")
-    return path.read_bytes()
+def _read_midi(dirs: list[Path], name: str) -> bytes:
+    if Path(name).suffix.lower() not in (".mid", ".midi"):
+        raise ValueError("Ungültiger MIDI-Dateiname (Endung .mid/.midi erforderlich).")
+    for directory in dirs:
+        root = directory.resolve()
+        path = (directory / name).resolve()
+        if root in path.parents and path.is_file():
+            return path.read_bytes()
+    raise ValueError(f"MIDI-Datei nicht gefunden: {name}")
 
 
 async def async_render_midi_and_cache(
     hass: HomeAssistant, *, midi_name: str, reverb: float = DEFAULT_REVERB
 ) -> tuple[str, float]:
-    """Render a MIDI file from the midi folder, cache it, return (filename, duration_s)."""
+    """Render a MIDI file, cache it, return (filename, duration_s)."""
     _ensure_initialized(hass)
     try:
-        midi_bytes = await hass.async_add_executor_job(_read_midi, midi_dir(hass), midi_name)
+        midi_bytes = await hass.async_add_executor_job(_read_midi, _midi_dirs(hass), midi_name)
         wav_bytes, duration_s = await hass.async_add_executor_job(render_midi, midi_bytes, reverb)
     except ValueError as err:
         raise HomeAssistantError(str(err)) from err
@@ -546,6 +571,37 @@ def _register_services(hass: HomeAssistant) -> None:
             midi_name=call.data[ATTR_MIDI_FILE],
         )
 
+    async def handle_download_midi(call: ServiceCall) -> dict[str, Any]:
+        url: str = call.data[ATTR_URL]
+        name = (call.data.get(ATTR_FILENAME) or url.split("?")[0].rstrip("/").rsplit("/", 1)[-1]).strip()
+        if not name:
+            raise HomeAssistantError("Dateiname konnte nicht ermittelt werden.")
+        if not name.lower().endswith((".mid", ".midi")):
+            name += ".mid"
+        name = Path(name).name
+
+        session = async_get_clientsession(hass)
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status != 200:
+                    raise HomeAssistantError(f"Download fehlgeschlagen (HTTP {resp.status}).")
+                data = await resp.content.read(5_000_001)
+        except aiohttp.ClientError as err:
+            raise HomeAssistantError(f"Download fehlgeschlagen: {err}") from err
+
+        if len(data) > 5_000_000:
+            raise HomeAssistantError("MIDI-Datei ist größer als 5 MB.")
+        if not data.startswith(b"MThd"):
+            raise HomeAssistantError("Die Datei ist keine gültige MIDI-Datei.")
+
+        def _save() -> None:
+            directory = midi_dir(hass)
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / name).write_bytes(data)
+
+        await hass.async_add_executor_job(_save)
+        return {"midi_file": name, "bytes": len(data)}
+
     async def handle_save_melody(call: ServiceCall) -> dict[str, Any]:
         custom_melodies = await async_ensure_melodies_loaded(hass)
         domain_data = hass.data[DOMAIN]
@@ -636,6 +692,15 @@ def _register_services(hass: HomeAssistant) -> None:
             supports_response=SupportsResponse.OPTIONAL,
         )
 
+    if not hass.services.has_service(DOMAIN, SERVICE_DOWNLOAD_MIDI):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_DOWNLOAD_MIDI,
+            handle_download_midi,
+            schema=DOWNLOAD_MIDI_SCHEMA,
+            supports_response=SupportsResponse.OPTIONAL,
+        )
+
     if not hass.services.has_service(DOMAIN, SERVICE_SAVE_MELODY):
         hass.services.async_register(
             DOMAIN,
@@ -720,6 +785,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         SERVICE_PLAY_NOTES,
         SERVICE_PLAY_PRESET,
         SERVICE_PLAY_MIDI,
+        SERVICE_DOWNLOAD_MIDI,
         SERVICE_SAVE_MELODY,
         SERVICE_DELETE_MELODY,
     ):

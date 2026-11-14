@@ -259,6 +259,23 @@ play_preset:
       selector:
         boolean:
 
+download_midi:
+  name: MIDI-Datei per URL herunterladen
+  description: Lädt eine .mid-Datei von einer URL (max. 5 MB) nach /config/www/note_player/midi, damit sie in Browse Media und bei play_midi verfügbar ist.
+  fields:
+    url:
+      name: URL
+      description: Direktlink zur MIDI-Datei.
+      required: true
+      selector:
+        text:
+    filename:
+      name: Dateiname (optional)
+      description: Name unter dem die Datei gespeichert wird.
+      required: false
+      selector:
+        text:
+
 play_midi:
   name: MIDI-Datei abspielen
   description: Spielt eine .mid-Datei aus /config/www/note_player/midi mit dem SoundFont ab (Vollversionen von Liedern).
