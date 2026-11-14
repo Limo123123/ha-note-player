@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 DOMAIN = "note_player"
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 
 STORAGE_KEY = "note_player_melodies"
 STORAGE_VERSION = 1

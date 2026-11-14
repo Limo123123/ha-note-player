@@ -95,7 +95,7 @@ Both playback services support optional service response data (`SupportsResponse
 
 Plays a Standard MIDI file (full-length songs) rendered with the SoundFont. Put `.mid` files into `/config/www/note_player/midi/` (max. 300 s). They also appear in **Browse Media → Note Player → MIDI-Dateien**. Fields: `midi_file` (file name), optional `reverb`, `volume_level`, `announce`. Each channel uses the instrument stored in the MIDI file.
 
-MIDI files can be added without file access: upload them in Home Assistant's **Media** panel (My media → upload; any `.mid`/`.midi` in your media folders is found automatically), or use `note_player.download_midi` (`url`, optional `filename`, max. 5 MB) to fetch one from a link.
+MIDI files can be added without file access: upload them in Home Assistant's **Media** panel (My media → upload; any `.mid`/`.midi` in your media folders is found automatically), or use `note_player.download_midi` (`url`, optional `filename`, max. 5 MB) to fetch one from a link, and `note_player.delete_midi` (`midi_file`) to delete a MIDI file.
 
 ### `note_player.save_melody` & `note_player.delete_melody`
 

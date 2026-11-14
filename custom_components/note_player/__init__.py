@@ -62,6 +62,7 @@ SERVICE_PLAY_NOTES = "play_notes"
 SERVICE_PLAY_PRESET = "play_preset"
 SERVICE_PLAY_MIDI = "play_midi"
 SERVICE_DOWNLOAD_MIDI = "download_midi"
+SERVICE_DELETE_MIDI = "delete_midi"
 SERVICE_SAVE_MELODY = "save_melody"
 SERVICE_DELETE_MELODY = "delete_melody"
 
@@ -138,6 +139,12 @@ DOWNLOAD_MIDI_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_URL): cv.url,
         vol.Optional(ATTR_FILENAME): cv.string,
+    }
+)
+
+DELETE_MIDI_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_MIDI_FILE): cv.string,
     }
 )
 
@@ -303,6 +310,18 @@ def _read_midi(dirs: list[Path], name: str) -> bytes:
         path = (directory / name).resolve()
         if root in path.parents and path.is_file():
             return path.read_bytes()
+    raise ValueError(f"MIDI-Datei nicht gefunden: {name}")
+
+
+def _delete_midi(dirs: list[Path], name: str) -> str:
+    if Path(name).suffix.lower() not in (".mid", ".midi"):
+        raise ValueError("Ungültiger MIDI-Dateiname (Endung .mid/.midi erforderlich).")
+    for directory in dirs:
+        root = directory.resolve()
+        path = (directory / name).resolve()
+        if root in path.parents and path.is_file():
+            path.unlink()
+            return str(path)
     raise ValueError(f"MIDI-Datei nicht gefunden: {name}")
 
 
@@ -602,6 +621,13 @@ def _register_services(hass: HomeAssistant) -> None:
         await hass.async_add_executor_job(_save)
         return {"midi_file": name, "bytes": len(data)}
 
+    async def handle_delete_midi(call: ServiceCall) -> None:
+        midi_name = call.data[ATTR_MIDI_FILE].strip()
+        try:
+            await hass.async_add_executor_job(_delete_midi, _midi_dirs(hass), midi_name)
+        except ValueError as err:
+            raise HomeAssistantError(str(err)) from err
+
     async def handle_save_melody(call: ServiceCall) -> dict[str, Any]:
         custom_melodies = await async_ensure_melodies_loaded(hass)
         domain_data = hass.data[DOMAIN]
@@ -701,6 +727,14 @@ def _register_services(hass: HomeAssistant) -> None:
             supports_response=SupportsResponse.OPTIONAL,
         )
 
+    if not hass.services.has_service(DOMAIN, SERVICE_DELETE_MIDI):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_DELETE_MIDI,
+            handle_delete_midi,
+            schema=DELETE_MIDI_SCHEMA,
+        )
+
     if not hass.services.has_service(DOMAIN, SERVICE_SAVE_MELODY):
         hass.services.async_register(
             DOMAIN,
@@ -786,6 +820,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         SERVICE_PLAY_PRESET,
         SERVICE_PLAY_MIDI,
         SERVICE_DOWNLOAD_MIDI,
+        SERVICE_DELETE_MIDI,
         SERVICE_SAVE_MELODY,
         SERVICE_DELETE_MELODY,
     ):

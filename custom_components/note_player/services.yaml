@@ -319,6 +319,18 @@ play_midi:
       selector:
         boolean:
 
+delete_midi:
+  name: MIDI-Datei löschen
+  description: Löscht eine .mid/.midi-Datei aus /config/www/note_player/midi oder den Home-Assistant-Media-Ordnern.
+  fields:
+    midi_file:
+      name: MIDI-Dateiname
+      description: Dateiname (oder relativer Pfad) inklusive Endung, z. B. "storms.mid".
+      required: true
+      example: "storms.mid"
+      selector:
+        text:
+
 save_melody:
   name: Eigene Melodie speichern (für Browse Media)
   description: Speichert eine benannte Melodie dauerhaft, damit sie direkt in Browse Media unter jedem Instrument abrufbar ist.
