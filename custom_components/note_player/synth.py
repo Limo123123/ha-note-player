@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import hashlib
 import io
@@ -30,6 +31,8 @@ from .meltysynth import (
     SoundFont,
     Synthesizer,
     SynthesizerSettings,
+    _MidiMessage,
+    _MidiMessageType,
     create_buffer,
 )
 
@@ -827,6 +830,7 @@ def _render_with_soundfont(
     instrument: str,
     bpm: int,
     reverb: float,
+    progress_cb: Callable[[int], None] | None = None,
 ) -> np.ndarray | None:
     """Render events via pure-Python SoundFont 2 synthesis (py-meltysynth)."""
     all_midis = sorted(m for ev in events for m in ev.midis)
@@ -912,6 +916,7 @@ def _render_with_soundfont(
 
     stereo = np.zeros((2, total_samples), dtype=np.float64)
     cursor = 0
+    last_pct = 0
 
     for msg_sample, msg_type, midi, vel in midi_msgs:
         clamped = min(msg_sample, total_samples)
@@ -923,6 +928,11 @@ def _render_with_soundfont(
             stereo[0, cursor:clamped] = np.asarray(left, dtype=np.float64)
             stereo[1, cursor:clamped] = np.asarray(right, dtype=np.float64)
             cursor = clamped
+            if progress_cb is not None and total_samples > 0:
+                pct = min(98, int(cursor * 100 / total_samples))
+                if pct - last_pct >= 10:
+                    last_pct = pct
+                    progress_cb(pct)
 
         if msg_type == 1:
             synth.note_on(0, midi, vel)
@@ -936,6 +946,9 @@ def _render_with_soundfont(
         synth.render(left, right)
         stereo[0, cursor:total_samples] = np.asarray(left, dtype=np.float64)
         stereo[1, cursor:total_samples] = np.asarray(right, dtype=np.float64)
+
+    if progress_cb is not None:
+        progress_cb(100)
 
     return _apply_presence_eq(stereo)
 
@@ -977,6 +990,7 @@ def synthesize_notes(
     bpm: int = DEFAULT_BPM,
     default_octave: int = DEFAULT_OCTAVE,
     reverb: float = DEFAULT_REVERB,
+    progress_cb: Callable[[int], None] | None = None,
 ) -> tuple[bytes, float]:
     """Parse notes and render 16-bit stereo PCM WAV bytes plus duration in seconds.
 
@@ -984,6 +998,9 @@ def synthesize_notes(
     """
     if instrument not in INSTRUMENTS:
         raise ValueError(f"Unbekanntes Instrument: '{instrument}'. Verfügbar: {', '.join(INSTRUMENTS)}")
+
+    if progress_cb is not None:
+        progress_cb(0)
 
     events, resolved_bpm = parse_notes(
         notes=notes,
@@ -995,7 +1012,9 @@ def synthesize_notes(
     sound_font = _get_soundfont()
     stereo: np.ndarray | None = None
     if sound_font is not None:
-        stereo = _render_with_soundfont(sound_font, events, instrument, resolved_bpm, reverb)
+        stereo = _render_with_soundfont(
+            sound_font, events, instrument, resolved_bpm, reverb, progress_cb=progress_cb
+        )
 
     if stereo is not None:
         total_samples = stereo.shape[1]
@@ -1050,6 +1069,8 @@ def synthesize_notes(
             stereo[1, start_idx : start_idx + take] += gain_r * voice[:take]
 
         stereo = _apply_stereo_reverb(stereo, reverb, rng)
+        if progress_cb is not None:
+            progress_cb(100)
 
     # Gentle soft-clipping headroom + normalization.
     peak = float(np.max(np.abs(stereo)))
@@ -1073,11 +1094,89 @@ def synthesize_notes(
 MAX_MIDI_SECONDS = 300.0
 
 
-def render_midi(midi_bytes: bytes, reverb: float = DEFAULT_REVERB) -> tuple[bytes, float]:
+def _override_midi_instrument(midi: MidiFile, instrument: str) -> None:
+    """Rewrite a MidiFile's messages to force all melodic channels to a single GM instrument."""
+    gm_program = int(INSTRUMENTS[instrument].get("gm_program", 0))
+    orig_messages = list(midi._messages)  # noqa: SLF001
+    orig_times = list(midi._times)  # noqa: SLF001
+
+    # Check if there are any melodic note-on events (ch != 9).
+    melodic_pitches: list[int] = [
+        msg.data1
+        for msg in orig_messages
+        if msg.type == _MidiMessageType.NORMAL
+        and msg.channel != 9
+        and msg.command == 0x90
+        and msg.data2 > 0
+    ]
+    has_melodic = len(melodic_pitches) > 0
+
+    # Auto-brighten soprano instruments if the MIDI melody is written in a low octave.
+    transpose = 0
+    if has_melodic and instrument in {"ocarina", "music_box", "glockenspiel"}:
+        sorted_p = sorted(melodic_pitches)
+        median_p = sorted_p[len(sorted_p) // 2]
+        if median_p < 65:
+            transpose = 12
+
+    new_messages: list[_MidiMessage] = []
+    new_times: list[float] = []
+
+    for msg, t in zip(orig_messages, orig_times):
+        if msg.type != _MidiMessageType.NORMAL:
+            new_messages.append(msg)
+            new_times.append(t)
+            continue
+
+        ch = msg.channel
+        cmd = msg.command
+        d1 = msg.data1
+        d2 = msg.data2
+
+        if ch == 9:
+            if has_melodic:
+                # Mute percussion channel so the solo instrument plays cleanly without drum hits.
+                continue
+            ch = 0
+
+        if cmd == 0xC0:
+            # Force Program Change to the chosen instrument.
+            new_messages.append(_MidiMessage(ch, 0xC0, gm_program, 0))
+            new_times.append(t)
+            continue
+
+        if cmd == 0xB0 and d1 in (0x00, 0x20):
+            # Ignore Bank Select MSB/LSB so the channel stays in GM Bank 0.
+            continue
+
+        if transpose and cmd in (0x80, 0x90):
+            d1 = max(21, min(108, d1 + transpose))
+
+        new_messages.append(_MidiMessage(ch, cmd, d1, d2))
+        new_times.append(t)
+
+    midi._messages = new_messages  # noqa: SLF001
+    midi._times = new_times  # noqa: SLF001
+
+
+def render_midi(
+    midi_bytes: bytes,
+    reverb: float = DEFAULT_REVERB,
+    instrument: str | None = None,
+    progress_cb: Callable[[int], None] | None = None,
+) -> tuple[bytes, float]:
     """Render a Standard MIDI File with the SoundFont and return (wav_bytes, duration_seconds)."""
     sound_font = _get_soundfont()
     if sound_font is None:
         raise ValueError("Kein SoundFont gefunden - MIDI-Wiedergabe nicht möglich.")
+
+    if instrument is not None and instrument != "original" and instrument not in INSTRUMENTS:
+        raise ValueError(
+            f"Unbekanntes Instrument: '{instrument}'. Verfügbar: {', '.join(INSTRUMENTS)}"
+        )
+
+    if progress_cb is not None:
+        progress_cb(0)
 
     try:
         midi = MidiFile(io.BytesIO(midi_bytes))
@@ -1092,16 +1191,49 @@ def render_midi(midi_bytes: bytes, reverb: float = DEFAULT_REVERB) -> tuple[byte
             f"MIDI-Datei ist zu lang ({length_s:.0f}s, maximal {MAX_MIDI_SECONDS:.0f}s)."
         )
 
+    override_inst = instrument if (instrument and instrument in INSTRUMENTS) else None
+    if override_inst is not None:
+        _override_midi_instrument(midi, override_inst)
+
     settings = SynthesizerSettings(SAMPLE_RATE)
     settings.enable_reverb_and_chorus = reverb > 0.05
     synth = Synthesizer(sound_font, settings)
     sequencer = MidiFileSequencer(synth)
     sequencer.play(midi, False)
 
+    if override_inst is not None:
+        gm_program = int(INSTRUMENTS[override_inst].get("gm_program", 0))
+        reverb_cc = max(0, min(127, int(round(max(0.0, min(1.0, float(reverb))) * 115))))
+        chorus_cc = (
+            28
+            if override_inst in {"strings", "choir", "epiano", "organ", "electric_guitar"}
+            else 8
+        )
+        add_mod = override_inst in {
+            "ocarina",
+            "flute",
+            "pan_flute",
+            "recorder",
+            "violin",
+            "cello",
+            "trumpet",
+            "saxophone",
+        }
+        for ch in range(16):
+            if ch == 9:
+                continue
+            synth.process_midi_message(ch, 0xB0, 0x00, 0)
+            synth.process_midi_message(ch, 0xC0, gm_program, 0)
+            synth.process_midi_message(ch, 0xB0, 91, reverb_cc)
+            synth.process_midi_message(ch, 0xB0, 93, chorus_cc)
+            if add_mod:
+                synth.process_midi_message(ch, 0xB0, 1, 18)
+
     total = int((length_s + (2.0 if reverb > 0.05 else 0.8)) * SAMPLE_RATE)
     stereo = np.zeros((2, total), dtype=np.float32)
     chunk = SAMPLE_RATE
     pos = 0
+    last_pct = 0
     while pos < total:
         n = min(chunk, total - pos)
         left = create_buffer(n)
@@ -1110,10 +1242,21 @@ def render_midi(midi_bytes: bytes, reverb: float = DEFAULT_REVERB) -> tuple[byte
         stereo[0, pos : pos + n] = np.asarray(left, dtype=np.float32)
         stereo[1, pos : pos + n] = np.asarray(right, dtype=np.float32)
         pos += n
+        if progress_cb is not None and total > 0:
+            pct = min(99, int(pos * 100 / total))
+            if pct - last_pct >= 5:
+                last_pct = pct
+                progress_cb(pct)
+
+    if override_inst is not None:
+        stereo = _apply_presence_eq(stereo.astype(np.float64)).astype(np.float32)
 
     peak = float(np.max(np.abs(stereo)))
     if peak > 1e-6:
         stereo = stereo / peak * 0.9
+
+    if progress_cb is not None:
+        progress_cb(100)
 
     pcm16 = np.clip(stereo.T * 32767.0, -32768, 32767).astype("<i2")
     buf = io.BytesIO()

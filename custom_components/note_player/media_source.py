@@ -116,10 +116,44 @@ class NotePlayerMediaSource(MediaSource):
 
         if ident == "midi_list":
             names = await async_list_midi_files(self.hass)
-            children = [self._playable_node(f"midi/{name}", f"🎼 {name}") for name in names]
+            _, live_inst, _, _ = self._get_live_defaults()
+            live_inst_name = INSTRUMENTS[live_inst]["name_de"]
+            children: list[BrowseMediaSource] = []
+            for name in names:
+                children.append(
+                    self._playable_node(
+                        f"midi_inst/{live_inst}/{name}",
+                        f"🎵 {name} (mit {live_inst_name} abspielen)",
+                    )
+                )
+                children.append(
+                    self._playable_node(
+                        f"midi/{name}",
+                        f"🎼 {name} (Original-Instrumente der MIDI)",
+                    )
+                )
             return self._folder_node(
                 "midi_list",
-                "MIDI-Dateien (/config/www/note_player/midi)",
+                f"MIDI-Dateien (mit {live_inst_name} oder Original)",
+                children=children,
+            )
+
+        if ident.startswith("midi_folder/"):
+            instrument_id = ident.split("/", 1)[1]
+            if instrument_id not in INSTRUMENTS:
+                raise Unresolvable(f"Unbekanntes Instrument: {instrument_id}")
+            inst_name = INSTRUMENTS[instrument_id]["name_de"]
+            names = await async_list_midi_files(self.hass)
+            children = [
+                self._playable_node(
+                    f"midi_inst/{instrument_id}/{name}",
+                    f"🎵 {name} ({inst_name})",
+                )
+                for name in names
+            ]
+            return self._folder_node(
+                ident,
+                f"{inst_name} — MIDI-Dateien",
                 children=children,
             )
 
@@ -260,6 +294,10 @@ class NotePlayerMediaSource(MediaSource):
                 f"▶ Aktuelle Noten-Eingabe ({live_bpm} BPM): {preview}",
             ),
             self._folder_node(
+                f"midi_folder/{instrument_id}",
+                f"🎼 MIDI-Dateien mit {inst_name} abspielen",
+            ),
+            self._folder_node(
                 f"pad/{instrument_id}",
                 f"🎹 Einzelnoten & Akkorde ({inst_name})",
             ),
@@ -377,6 +415,21 @@ class NotePlayerMediaSource(MediaSource):
     async def async_resolve_media(self, item: MediaSourceItem) -> PlayMedia:
         """Synthesize the requested media-source item into a cached WAV URL."""
         ident = (item.identifier or "").strip("/")
+        if ident.startswith("midi_inst/"):
+            parts = ident.split("/", 2)
+            if len(parts) != 3 or parts[1] not in INSTRUMENTS:
+                raise Unresolvable(f"Ungültige MIDI-Instrument-ID: {ident}")
+            try:
+                filename, _dur = await async_render_midi_and_cache(
+                    self.hass,
+                    midi_name=parts[2],
+                    reverb=self._get_live_defaults()[3],
+                    instrument=parts[1],
+                )
+            except HomeAssistantError as err:
+                raise Unresolvable(str(err)) from err
+            return PlayMedia(url=f"{API_AUDIO_BASE_PATH}/{filename}", mime_type="audio/wav")
+
         if ident.startswith("midi/"):
             try:
                 filename, _dur = await async_render_midi_and_cache(

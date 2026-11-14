@@ -15,11 +15,12 @@ import voluptuous as vol
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ENTITY_ID, Platform
-from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
@@ -40,6 +41,7 @@ from .const import (
     DEFAULT_REVERB,
     DOMAIN,
     INSTRUMENT_IDS,
+    INSTRUMENTS,
     MAX_AUDIO_CACHE_ITEMS,
     PRESET_IDS,
     PRESETS,
@@ -51,11 +53,14 @@ from .synth import parse_notes, render_midi, synthesize_notes
 
 _LOGGER = logging.getLogger(__name__)
 
+SIGNAL_STATUS_UPDATED = f"{DOMAIN}_status_updated"
+
 PLATFORMS: list[Platform] = [
     Platform.TTS,
     Platform.TEXT,
     Platform.SELECT,
     Platform.NUMBER,
+    Platform.SENSOR,
 ]
 
 SERVICE_PLAY_NOTES = "play_notes"
@@ -127,6 +132,7 @@ PLAY_MIDI_SCHEMA = vol.Schema(
     {
         **_BASE_TARGET_FIELDS,
         vol.Required(ATTR_MIDI_FILE): cv.string,
+        vol.Optional(ATTR_INSTRUMENT): vol.In(["original", *INSTRUMENT_IDS]),
         vol.Optional(ATTR_REVERB): vol.All(vol.Coerce(float), vol.Range(min=0.0, max=1.0)),
         vol.Optional(ATTR_VOLUME_LEVEL): vol.All(
             vol.Coerce(float), vol.Range(min=0.0, max=1.0)
@@ -325,22 +331,148 @@ def _delete_midi(dirs: list[Path], name: str) -> str:
     raise ValueError(f"MIDI-Datei nicht gefunden: {name}")
 
 
+@callback
+def _async_update_status(
+    hass: HomeAssistant,
+    *,
+    phase: str,
+    state_text: str,
+    progress_percent: int = 0,
+    current_item: str | None = None,
+    instrument: str | None = None,
+    duration_s: float | None = None,
+    cached: bool = False,
+    last_error: str | None = None,
+) -> None:
+    """Update the Note Player live status dictionary and notify the sensor entity."""
+    if DOMAIN not in hass.data:
+        return
+    status = hass.data[DOMAIN].setdefault("status", {})
+    status.update(
+        {
+            "phase": phase,
+            "state_text": state_text,
+            "progress_percent": progress_percent,
+            "current_item": current_item,
+            "instrument": instrument,
+            "duration_s": duration_s,
+            "cached": cached,
+            "last_error": last_error,
+        }
+    )
+    async_dispatcher_send(hass, SIGNAL_STATUS_UPDATED)
+
+
+def _make_progress_cb(
+    hass: HomeAssistant, item_label: str, inst_label: str
+):
+    """Create a thread-safe progress callback for executor render jobs."""
+
+    def _cb(pct: int) -> None:
+        hass.loop.call_soon_threadsafe(
+            lambda p=pct: _async_update_status(
+                hass,
+                phase="rendering",
+                state_text=f"Synthetisiere {item_label} ({p} %)",
+                progress_percent=p,
+                current_item=item_label,
+                instrument=inst_label,
+            )
+        )
+
+    return _cb
+
+
 async def async_render_midi_and_cache(
-    hass: HomeAssistant, *, midi_name: str, reverb: float = DEFAULT_REVERB
+    hass: HomeAssistant,
+    *,
+    midi_name: str,
+    reverb: float = DEFAULT_REVERB,
+    instrument: str | None = None,
 ) -> tuple[str, float]:
-    """Render a MIDI file, cache it, return (filename, duration_s)."""
+    """Render a MIDI file (optionally overriding the instrument), cache it, return (filename, duration_s)."""
     _ensure_initialized(hass)
+    override_inst = instrument if (instrument and instrument in INSTRUMENTS) else None
+    inst_label = (
+        INSTRUMENTS[override_inst]["name_de"]
+        if override_inst
+        else "Original-Instrumente (MIDI)"
+    )
+    item_label = f"{midi_name} ({inst_label})"
+
     try:
         midi_bytes = await hass.async_add_executor_job(_read_midi, _midi_dirs(hass), midi_name)
-        wav_bytes, duration_s = await hass.async_add_executor_job(render_midi, midi_bytes, reverb)
     except ValueError as err:
+        _async_update_status(
+            hass,
+            phase="error",
+            state_text=f"Fehler: {err}",
+            current_item=midi_name,
+            instrument=inst_label,
+            last_error=str(err),
+        )
         raise HomeAssistantError(str(err)) from err
 
+    inst_key = override_inst or "orig"
     clip_hash = hashlib.sha256(
-        f"midi:{midi_name}:{reverb:.2f}:{len(midi_bytes)}".encode()
+        f"midi:{midi_name}:{inst_key}:{reverb:.2f}:{len(midi_bytes)}".encode()
     ).hexdigest()[:12]
-    filename = f"note_player_midi_{clip_hash}.wav"
+    filename = f"note_player_midi_{inst_key}_{clip_hash}.wav"
+
+    # Fast cache hit: skip re-rendering if already in memory cache!
+    cache: OrderedDict[str, bytes] = hass.data[DOMAIN]["audio_cache"]
+    if filename in cache:
+        cached_bytes = cache[filename]
+        cache.move_to_end(filename)
+        duration_s = round(max(0, len(cached_bytes) - 44) / (44100 * 4), 2)
+        _async_update_status(
+            hass,
+            phase="playing",
+            state_text=f"Bereit (Cache): {item_label}",
+            progress_percent=100,
+            current_item=midi_name,
+            instrument=inst_label,
+            duration_s=duration_s,
+            cached=True,
+        )
+        return filename, duration_s
+
+    _async_update_status(
+        hass,
+        phase="rendering",
+        state_text=f"Synthetisiere {item_label} (0 %)",
+        progress_percent=0,
+        current_item=midi_name,
+        instrument=inst_label,
+    )
+    progress_cb = _make_progress_cb(hass, midi_name, inst_label)
+
+    try:
+        wav_bytes, duration_s = await hass.async_add_executor_job(
+            render_midi, midi_bytes, reverb, override_inst, progress_cb
+        )
+    except ValueError as err:
+        _async_update_status(
+            hass,
+            phase="error",
+            state_text=f"Fehler: {err}",
+            current_item=midi_name,
+            instrument=inst_label,
+            last_error=str(err),
+        )
+        raise HomeAssistantError(str(err)) from err
+
     _store_audio_cache(hass, filename, wav_bytes)
+    _async_update_status(
+        hass,
+        phase="playing",
+        state_text=f"Spielt ab: {item_label} ({duration_s:.1f}s)",
+        progress_percent=100,
+        current_item=midi_name,
+        instrument=inst_label,
+        duration_s=duration_s,
+        cached=False,
+    )
     return filename, duration_s
 
 
@@ -355,21 +487,69 @@ async def async_render_and_cache_wav(
 ) -> tuple[str, float]:
     """Synthesize notes off the event loop, cache WAV audio, and return (filename, duration_s)."""
     _ensure_initialized(hass)
-    try:
-        wav_bytes, duration_s = await hass.async_add_executor_job(
-            synthesize_notes, notes, instrument, bpm, octave, reverb
-        )
-    except ValueError as err:
-        raise HomeAssistantError(str(err)) from err
+    inst_label = INSTRUMENTS.get(instrument, {}).get("name_de", instrument)
+    preview = notes if len(notes) <= 28 else f"{notes[:25]}..."
 
     clip_hash = hashlib.sha256(
         f"{instrument}:{bpm}:{octave}:{reverb:.2f}:{notes}".encode()
     ).hexdigest()[:12]
     filename = f"note_player_{instrument}_{clip_hash}.wav"
 
+    cache: OrderedDict[str, bytes] = hass.data[DOMAIN]["audio_cache"]
+    if filename in cache:
+        cached_bytes = cache[filename]
+        cache.move_to_end(filename)
+        duration_s = round(max(0, len(cached_bytes) - 44) / (44100 * 4), 2)
+        _async_update_status(
+            hass,
+            phase="playing",
+            state_text=f"Spielt ab (Cache): {inst_label} ({duration_s:.1f}s)",
+            progress_percent=100,
+            current_item=preview,
+            instrument=inst_label,
+            duration_s=duration_s,
+            cached=True,
+        )
+        return filename, duration_s
+
+    _async_update_status(
+        hass,
+        phase="rendering",
+        state_text=f"Synthetisiere {inst_label} (0 %)",
+        progress_percent=0,
+        current_item=preview,
+        instrument=inst_label,
+    )
+    progress_cb = _make_progress_cb(hass, inst_label, inst_label)
+
+    try:
+        wav_bytes, duration_s = await hass.async_add_executor_job(
+            synthesize_notes, notes, instrument, bpm, octave, reverb, progress_cb
+        )
+    except ValueError as err:
+        _async_update_status(
+            hass,
+            phase="error",
+            state_text=f"Fehler: {err}",
+            current_item=preview,
+            instrument=inst_label,
+            last_error=str(err),
+        )
+        raise HomeAssistantError(str(err)) from err
+
     _store_audio_cache(hass, filename, wav_bytes)
     www_dir = Path(hass.config.path("www", DOMAIN))
     await hass.async_add_executor_job(_write_audio_backup, www_dir, filename, wav_bytes)
+    _async_update_status(
+        hass,
+        phase="playing",
+        state_text=f"Spielt ab: {inst_label} ({duration_s:.1f}s)",
+        progress_percent=100,
+        current_item=preview,
+        instrument=inst_label,
+        duration_s=duration_s,
+        cached=False,
+    )
     return filename, duration_s
 
 
@@ -435,6 +615,7 @@ async def _play_rendered_audio(
     volume_level: float | None,
     announce: bool,
     midi_name: str | None = None,
+    midi_instrument: str | None = None,
 ) -> dict[str, Any]:
     """Synthesize notes (or a MIDI file), cache WAV, and stream to target speakers."""
     domain_data = hass.data[DOMAIN]
@@ -444,7 +625,7 @@ async def _play_rendered_audio(
     entity_ids = await _resolve_target_entities(hass, call, default_player)
     if midi_name:
         filename, duration_s = await async_render_midi_and_cache(
-            hass, midi_name=midi_name, reverb=reverb
+            hass, midi_name=midi_name, reverb=reverb, instrument=midi_instrument
         )
     else:
         filename, duration_s = await async_render_and_cache_wav(
@@ -570,11 +751,13 @@ def _register_services(hass: HomeAssistant) -> None:
     async def handle_play_midi(call: ServiceCall) -> dict[str, Any]:
         domain_data = hass.data[DOMAIN]
         opts: dict[str, Any] = domain_data.get("options", {})
+        raw_inst = call.data.get(ATTR_INSTRUMENT)
+        midi_inst = None if (not raw_inst or raw_inst == "original") else str(raw_inst)
         return await _play_rendered_audio(
             hass,
             call,
             notes="",
-            instrument=DEFAULT_INSTRUMENT,
+            instrument=midi_inst or "original",
             bpm=DEFAULT_BPM,
             octave=DEFAULT_OCTAVE,
             reverb=call.data.get(
@@ -588,6 +771,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 ATTR_ANNOUNCE, opts.get(CONF_DEFAULT_ANNOUNCE, DEFAULT_ANNOUNCE)
             ),
             midi_name=call.data[ATTR_MIDI_FILE],
+            midi_instrument=midi_inst,
         )
 
     async def handle_download_midi(call: ServiceCall) -> dict[str, Any]:
@@ -767,6 +951,16 @@ def _ensure_initialized(hass: HomeAssistant) -> None:
             "live_instrument": DEFAULT_INSTRUMENT,
             "live_bpm": DEFAULT_BPM,
             "live_reverb": DEFAULT_REVERB,
+            "status": {
+                "phase": "idle",
+                "state_text": "Bereit",
+                "progress_percent": 0,
+                "current_item": None,
+                "instrument": None,
+                "duration_s": None,
+                "cached": False,
+                "last_error": None,
+            },
         }
     if getattr(hass, "http", None) is not None and not hass.data[DOMAIN]["view_registered"]:
         hass.http.register_view(NotePlayerAudioView(hass))

@@ -278,7 +278,7 @@ download_midi:
 
 play_midi:
   name: MIDI-Datei abspielen
-  description: Spielt eine .mid-Datei aus /config/www/note_player/midi mit dem SoundFont ab (Vollversionen von Liedern).
+  description: Spielt eine .mid-Datei aus /config/www/note_player/midi oder den HA-Media-Ordnern mit dem SoundFont ab (wahlweise mit den Original-Instrumenten der MIDI oder einem gewählten Instrument).
   target:
     entity:
       domain: media_player
@@ -290,6 +290,60 @@ play_midi:
       example: "storms.mid"
       selector:
         text:
+    instrument:
+      name: Instrument überschreiben (optional)
+      description: Wähle "Original-Instrumente der MIDI" oder erzwinge ein einzelnes Instrument (z. B. Okarina, Klavier, Gitarre) für alle Melodiespuren.
+      required: false
+      default: original
+      selector:
+        select:
+          options:
+            - label: Original-Instrumente der MIDI-Datei
+              value: original
+            - label: Okarina
+              value: ocarina
+            - label: Querflöte
+              value: flute
+            - label: Blockflöte
+              value: recorder
+            - label: Panflöte
+              value: pan_flute
+            - label: Klavier (Flügel)
+              value: piano
+            - label: E-Piano (Rhodes)
+              value: epiano
+            - label: Akustik-Gitarre (Nylon)
+              value: guitar
+            - label: Westerngitarre (Stahlsaiten)
+              value: steel_guitar
+            - label: E-Gitarre (Clean)
+              value: electric_guitar
+            - label: Violine
+              value: violin
+            - label: Cello
+              value: cello
+            - label: Streicher-Ensemble
+              value: strings
+            - label: Harfe
+              value: harp
+            - label: Spieluhr
+              value: music_box
+            - label: Glockenspiel
+              value: glockenspiel
+            - label: Marimba
+              value: marimba
+            - label: Kirchenorgel
+              value: organ
+            - label: Akkordeon
+              value: accordion
+            - label: Trompete
+              value: trumpet
+            - label: Saxophon
+              value: saxophone
+            - label: Chor (Aah)
+              value: choir
+            - label: 8-Bit / Retro
+              value: chiptune
     reverb:
       name: Raumhall (Reverb)
       description: Raumhall von 0.0 bis 1.0.
