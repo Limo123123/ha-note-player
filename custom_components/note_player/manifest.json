@@ -3,11 +3,11 @@
   "name": "Note Player",
   "codeowners": ["@Limo123123"],
   "config_flow": true,
-  "dependencies": ["http"],
+  "dependencies": ["http", "media_source", "tts"],
   "documentation": "https://github.com/Limo123123/ha-note-player",
   "integration_type": "service",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/Limo123123/ha-note-player/issues",
   "requirements": ["numpy>=1.26.0"],
-  "version": "1.0.0"
+  "version": "1.1.0"
 }

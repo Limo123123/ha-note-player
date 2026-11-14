@@ -31,5 +31,26 @@
         }
       }
     }
+  },
+  "entity": {
+    "select": {
+      "instrument": {
+        "state": {
+          "ocarina": "Okarina",
+          "flute": "Querflöte",
+          "pan_flute": "Panflöte",
+          "piano": "Klavier (Flügel)",
+          "epiano": "E-Piano (Rhodes)",
+          "guitar": "Akustik-Gitarre (Nylon)",
+          "steel_guitar": "Westerngitarre (Stahlsaiten)",
+          "electric_guitar": "E-Gitarre",
+          "violin": "Violine / Streicher",
+          "harp": "Harfe",
+          "music_box": "Spieluhr / Glockenspiel",
+          "organ": "Orgel",
+          "chiptune": "8-Bit / Retro"
+        }
+      }
+    }
   }
 }

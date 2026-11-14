@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 DOMAIN = "note_player"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+
+STORAGE_KEY = "note_player_melodies"
+STORAGE_VERSION = 1
+API_AUDIO_BASE_PATH = "/api/note_player/audio"
 
 CONF_DEFAULT_MEDIA_PLAYER = "default_media_player"
 CONF_DEFAULT_INSTRUMENT = "default_instrument"
@@ -17,6 +21,7 @@ DEFAULT_DURATION = 4
 DEFAULT_REVERB = 0.25
 DEFAULT_INSTRUMENT = "ocarina"
 DEFAULT_ANNOUNCE = True
+DEFAULT_LIVE_NOTES = "A4:4 D4:2 F4:4 A4:4 D4:2 F4:4"
 
 SAMPLE_RATE = 44100
 MAX_AUDIO_CACHE_ITEMS = 20
@@ -143,3 +148,55 @@ PRESETS: dict[str, dict[str, object]] = {
 }
 
 PRESET_IDS: list[str] = list(PRESETS.keys())
+
+RIFFS: dict[str, dict[str, object]] = {
+    "c_major_scale": {
+        "title": "C-Dur Tonleiter (C4 - C5)",
+        "bpm": 130,
+        "notes": "C4:8 D4:8 E4:8 F4:8 G4:8 A4:8 B4:8 C5:2",
+    },
+    "a_minor_arpeggio": {
+        "title": "a-Moll Arpeggio",
+        "bpm": 120,
+        "notes": "A3:8 C4:8 E4:8 A4:8 C5:8 E5:8 A5:4 E5:8 C5:8 A4:2",
+    },
+    "spanish_cadence": {
+        "title": "Andalusische Kadenz (Am - G - F - E)",
+        "bpm": 100,
+        "notes": "Am:2 Gmaj:2 Fmaj:2 Emaj:1",
+    },
+    "pop_chords": {
+        "title": "Pop-Akkordfolge (C - G - Am - F)",
+        "bpm": 105,
+        "notes": "Cmaj:2 Gmaj:2 Am:2 Fmaj:2 C4+E4+G4+C5:1",
+    },
+    "warm_arpeggio": {
+        "title": "Warme Jazz-Akkorde (Cmaj7 - Am7 - Fmaj7 - G7)",
+        "bpm": 92,
+        "notes": "Cmaj7:2 Am7:2 Fmaj7:2 G7:2 Cmaj7:1",
+    },
+    "pentatonic_lick": {
+        "title": "Blues / Pentatonik-Lick",
+        "bpm": 125,
+        "notes": "A4:8 C5:8 D5:8 D#5:8 E5:4 G5:8 E5:8 A4:2",
+    },
+}
+
+RIFF_IDS: list[str] = list(RIFFS.keys())
+
+PAD_ITEMS: dict[str, dict[str, str]] = {
+    "note_c4": {"title": "Note C4", "notes": "C4:2"},
+    "note_d4": {"title": "Note D4", "notes": "D4:2"},
+    "note_e4": {"title": "Note E4", "notes": "E4:2"},
+    "note_f4": {"title": "Note F4", "notes": "F4:2"},
+    "note_g4": {"title": "Note G4", "notes": "G4:2"},
+    "note_a4": {"title": "Note A4 (Kammerton 440 Hz)", "notes": "A4:2"},
+    "note_b4": {"title": "Note H4 / B4", "notes": "B4:2"},
+    "note_c5": {"title": "Note C5", "notes": "C5:2"},
+    "chord_cmaj": {"title": "Akkord C-Dur", "notes": "Cmaj:1"},
+    "chord_dm": {"title": "Akkord d-Moll", "notes": "Dm:1"},
+    "chord_em": {"title": "Akkord e-Moll", "notes": "Em:1"},
+    "chord_fmaj": {"title": "Akkord F-Dur", "notes": "Fmaj:1"},
+    "chord_gmaj": {"title": "Akkord G-Dur", "notes": "Gmaj:1"},
+    "chord_am": {"title": "Akkord a-Moll", "notes": "Am:1"},
+}

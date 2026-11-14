@@ -31,5 +31,26 @@
         }
       }
     }
+  },
+  "entity": {
+    "select": {
+      "instrument": {
+        "state": {
+          "ocarina": "Ocarina",
+          "flute": "Flute",
+          "pan_flute": "Pan Flute",
+          "piano": "Grand Piano",
+          "epiano": "Electric Piano (Rhodes)",
+          "guitar": "Acoustic Guitar (Nylon)",
+          "steel_guitar": "Steel-String Guitar",
+          "electric_guitar": "Electric Guitar",
+          "violin": "Violin / Strings",
+          "harp": "Harp",
+          "music_box": "Music Box / Glockenspiel",
+          "organ": "Organ",
+          "chiptune": "8-Bit Chiptune"
+        }
+      }
+    }
   }
 }

@@ -24,8 +24,25 @@
   - Explicit polyphonic chords with strum (`C4+E4+G4:2`) and named chord symbols (`Am:2`, `G7:4`, `Fmaj7:1`, `Cmaj6:2`)
   - **RTTTL ringtone strings** (`Zelda:d=4,o=5,b=110:a,2d,f,a`)
 - **10 Built-in Presets**: `zelda_song_of_time`, `zelda_lullaby`, `zelda_sarias_song`, `zelda_storms`, `zelda_secret`, `fur_elise`, `spanish_romance`, `morning_mood`, `doorbell_warm`, `notification_success`
+- **Native Browse Media Integration (`media_source` + `tts`)**:
+  - Open **Browse Media** on any `media_player` entity (or in the **Media** sidebar) and choose **Note Player (Instrumente & Melodien)** to browse by instrument, play presets, chords, riffs, single notes, saved melodies, or your live input notes directly on that exact speaker.
+  - Or open **Browse Media → Text-to-Speech → Note Player (Noten-Eingabe)** right inside the speaker dialog to type arbitrary notes (`A4:4 D4:2 F4:4` or `bpm=140 C4+E4+G4:2`), choose any of the 13 instruments from the dropdown, and hit Play!
+- **Interactive Dashboard Entities**: Creates `text`, `select`, and `number` entities (`Noten-Eingabe`, `Instrument`, `Tempo (BPM)`, `Raumhall (Reverb)`) plus persistent custom melodies (`save_melody` / `delete_melody`).
 - **Built-in HTTP Audio Serving + Caching**: Serves synthesized 16-bit 44.1 kHz stereo WAV files directly from `/api/note_player/audio/{filename}` (with `HEAD`, `GET`, HTTP byte-range support, and `/config/www/note_player` backup), plus optional `announce` mode with automatic fallback if a speaker rejects `announce: true`.
 - **UI Configuration & Options Flow**: Configure default speaker, instrument, BPM, reverb, and announce behavior via the Home Assistant UI.
+
+---
+
+## Browse Media Usage (Directly on Any Speaker)
+
+1. Open any speaker in Home Assistant (e.g., **Media Player card → Browse Media**) so the target entity is already selected automatically.
+2. **Option A — Structured Instrument Browser (`Note Player (Instrumente & Melodien)`):**
+   - Pick any instrument folder (`Okarina`, `Akustik-Gitarre`, `Klavier`, etc.) to play built-in presets, riffs/scales, single notes/chords, saved custom melodies, or your current **Noten-Eingabe** text entity with one click.
+3. **Option B — Direct Free-Text Note Box (`Text-to-Speech → Note Player (Noten-Eingabe)`):**
+   - Pick your desired **Instrument** in the Voice dropdown.
+   - Enter notes or RTTTL directly (e.g., `A4:4 D4:2 F4:4` or `bpm=145 reverb=0.4 Am:2 G7:2 Cmaj:1` or `preset=fur_elise`) and play straight to the selected speaker.
+4. **Automations via `media-source://`:**
+   - You can also play dynamic URIs using `media_player.play_media` with `media_content_id: "media-source://note_player/play/ocarina/110/A4:4%20D4:2%20F4:4"`.
 
 ---
 
@@ -72,7 +89,11 @@ Synthesizes and plays a custom note, chord, or RTTTL sequence.
 
 Plays one of the 10 built-in melodies (`preset`), optionally overriding `instrument`, `bpm`, `reverb`, `volume_level`, or `announce`.
 
-Both services support optional service response data (`SupportsResponse.OPTIONAL`) and fire the `note_player_played` event containing `entity_id`, `instrument`, `bpm`, `duration_s`, and `url`.
+Both playback services support optional service response data (`SupportsResponse.OPTIONAL`) and fire the `note_player_played` event containing `entity_id`, `instrument`, `bpm`, `duration_s`, and `url`.
+
+### `note_player.save_melody` & `note_player.delete_melody`
+
+Save or delete named custom melodies (`title`, `notes`, optional `instrument`, optional `bpm`) in persistent Home Assistant storage so they appear immediately in **Browse Media** under every instrument and in *Eigene gespeicherte Melodien*.
 
 ---
 

@@ -13,14 +13,18 @@ import voluptuous as vol
 
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_ENTITY_ID
+from homeassistant.const import ATTR_ENTITY_ID, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.network import NoURLAvailableError, get_url
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.util import slugify
 
 from .const import (
+    API_AUDIO_BASE_PATH,
     CONF_DEFAULT_ANNOUNCE,
     CONF_DEFAULT_BPM,
     CONF_DEFAULT_INSTRUMENT,
@@ -29,6 +33,7 @@ from .const import (
     DEFAULT_ANNOUNCE,
     DEFAULT_BPM,
     DEFAULT_INSTRUMENT,
+    DEFAULT_LIVE_NOTES,
     DEFAULT_OCTAVE,
     DEFAULT_REVERB,
     DOMAIN,
@@ -36,13 +41,25 @@ from .const import (
     MAX_AUDIO_CACHE_ITEMS,
     PRESET_IDS,
     PRESETS,
+    STORAGE_KEY,
+    STORAGE_VERSION,
+    VERSION,
 )
-from .synth import synthesize_notes
+from .synth import parse_notes, synthesize_notes
 
 _LOGGER = logging.getLogger(__name__)
 
+PLATFORMS: list[Platform] = [
+    Platform.TTS,
+    Platform.TEXT,
+    Platform.SELECT,
+    Platform.NUMBER,
+]
+
 SERVICE_PLAY_NOTES = "play_notes"
 SERVICE_PLAY_PRESET = "play_preset"
+SERVICE_SAVE_MELODY = "save_melody"
+SERVICE_DELETE_MELODY = "delete_melody"
 
 ATTR_NOTES = "notes"
 ATTR_INSTRUMENT = "instrument"
@@ -52,8 +69,9 @@ ATTR_REVERB = "reverb"
 ATTR_VOLUME_LEVEL = "volume_level"
 ATTR_ANNOUNCE = "announce"
 ATTR_PRESET = "preset"
+ATTR_TITLE = "title"
+ATTR_MELODY_ID = "melody_id"
 
-API_AUDIO_BASE_PATH = "/api/note_player/audio"
 EVENT_PLAYED = f"{DOMAIN}_played"
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -96,6 +114,33 @@ PLAY_PRESET_SCHEMA = vol.Schema(
         vol.Optional(ATTR_ANNOUNCE): cv.boolean,
     }
 )
+
+SAVE_MELODY_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_TITLE): cv.string,
+        vol.Required(ATTR_NOTES): cv.string,
+        vol.Optional(ATTR_INSTRUMENT): vol.In(INSTRUMENT_IDS),
+        vol.Optional(ATTR_BPM): vol.All(vol.Coerce(int), vol.Range(min=30, max=300)),
+    }
+)
+
+DELETE_MELODY_SCHEMA = vol.Schema(
+    {
+        vol.Optional(ATTR_MELODY_ID): cv.string,
+        vol.Optional(ATTR_TITLE): cv.string,
+    }
+)
+
+
+def get_device_info(entry_id: str) -> DeviceInfo:
+    """Return shared DeviceInfo for all Note Player entities."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, entry_id)},
+        name="Note Player",
+        manufacturer="Note Player",
+        model="Instrument Synthesizer",
+        sw_version=VERSION,
+    )
 
 
 class NotePlayerAudioView(HomeAssistantView):
@@ -169,19 +214,17 @@ class NotePlayerAudioView(HomeAssistantView):
         )
 
 
-def _store_audio(
-    hass: HomeAssistant,
-    filename: str,
-    wav_bytes: bytes,
-    www_dir: Path,
-) -> None:
-    """Cache WAV bytes in memory (LRU) and write a backup copy under /config/www."""
+def _store_audio_cache(hass: HomeAssistant, filename: str, wav_bytes: bytes) -> None:
+    """Store synthesized WAV bytes in the bounded in-memory LRU cache."""
     cache: OrderedDict[str, bytes] = hass.data[DOMAIN]["audio_cache"]
     cache[filename] = wav_bytes
     cache.move_to_end(filename)
     while len(cache) > MAX_AUDIO_CACHE_ITEMS:
         cache.popitem(last=False)
 
+
+def _write_audio_backup(www_dir: Path, filename: str, wav_bytes: bytes) -> None:
+    """Write a bounded WAV backup copy under /config/www/note_player."""
     try:
         www_dir.mkdir(parents=True, exist_ok=True)
         (www_dir / filename).write_bytes(wav_bytes)
@@ -190,6 +233,35 @@ def _store_audio(
             old_file.unlink(missing_ok=True)
     except OSError as err:
         _LOGGER.debug("Could not write backup WAV to %s: %s", www_dir, err)
+
+
+async def async_render_and_cache_wav(
+    hass: HomeAssistant,
+    *,
+    notes: str,
+    instrument: str,
+    bpm: int,
+    octave: int = DEFAULT_OCTAVE,
+    reverb: float = DEFAULT_REVERB,
+) -> tuple[str, float]:
+    """Synthesize notes off the event loop, cache WAV audio, and return (filename, duration_s)."""
+    _ensure_initialized(hass)
+    try:
+        wav_bytes, duration_s = await hass.async_add_executor_job(
+            synthesize_notes, notes, instrument, bpm, octave, reverb
+        )
+    except ValueError as err:
+        raise HomeAssistantError(str(err)) from err
+
+    clip_hash = hashlib.sha256(
+        f"{instrument}:{bpm}:{octave}:{reverb:.2f}:{notes}".encode()
+    ).hexdigest()[:12]
+    filename = f"note_player_{instrument}_{clip_hash}.wav"
+
+    _store_audio_cache(hass, filename, wav_bytes)
+    www_dir = Path(hass.config.path("www", DOMAIN))
+    await hass.async_add_executor_job(_write_audio_backup, www_dir, filename, wav_bytes)
+    return filename, duration_s
 
 
 def _get_base_url(hass: HomeAssistant) -> str:
@@ -216,7 +288,6 @@ async def _resolve_target_entities(
     """Resolve target media_player entity IDs from explicit targets, areas, or defaults."""
     explicit = list(call.data.get(ATTR_ENTITY_ID) or [])
 
-    # Extract area/device/floor/label targets via Home Assistant's target helper when present.
     has_indirect_target = any(
         call.data.get(key) for key in ("device_id", "area_id", "floor_id", "label_id")
     )
@@ -255,27 +326,20 @@ async def _play_rendered_audio(
     volume_level: float | None,
     announce: bool,
 ) -> dict[str, Any]:
-    """Synthesize notes off the event loop, cache WAV, and stream to target speakers."""
+    """Synthesize notes, cache WAV, and stream to target speakers."""
     domain_data = hass.data[DOMAIN]
     options: dict[str, Any] = domain_data.get("options", {})
     default_player = options.get(CONF_DEFAULT_MEDIA_PLAYER)
 
     entity_ids = await _resolve_target_entities(hass, call, default_player)
-
-    try:
-        wav_bytes, duration_s = await hass.async_add_executor_job(
-            synthesize_notes, notes, instrument, bpm, octave, reverb
-        )
-    except ValueError as err:
-        raise HomeAssistantError(str(err)) from err
-
-    clip_hash = hashlib.sha256(
-        f"{instrument}:{bpm}:{octave}:{reverb:.2f}:{notes}".encode()
-    ).hexdigest()[:12]
-    filename = f"note_player_{instrument}_{clip_hash}.wav"
-    www_dir = Path(hass.config.path("www", DOMAIN))
-
-    await hass.async_add_executor_job(_store_audio, hass, filename, wav_bytes, www_dir)
+    filename, duration_s = await async_render_and_cache_wav(
+        hass,
+        notes=notes,
+        instrument=instrument,
+        bpm=bpm,
+        octave=octave,
+        reverb=reverb,
+    )
 
     base_url = _get_base_url(hass)
     audio_url = f"{base_url}{API_AUDIO_BASE_PATH}/{filename}"
@@ -317,21 +381,47 @@ async def _play_rendered_audio(
     return payload
 
 
+async def async_ensure_melodies_loaded(hass: HomeAssistant) -> dict[str, dict[str, Any]]:
+    """Load saved custom melodies from Home Assistant storage once."""
+    _ensure_initialized(hass)
+    domain_data = hass.data[DOMAIN]
+    if not domain_data["custom_melodies_loaded"]:
+        store: Store = domain_data["store"]
+        loaded = await store.async_load()
+        if isinstance(loaded, dict):
+            domain_data["custom_melodies"] = {
+                str(k): dict(v) for k, v in loaded.items() if isinstance(v, dict)
+            }
+        domain_data["custom_melodies_loaded"] = True
+    return domain_data["custom_melodies"]
+
+
 def _register_services(hass: HomeAssistant) -> None:
-    """Register play_notes and play_preset services if not already registered."""
+    """Register Note Player services if not already registered."""
 
     async def handle_play_notes(call: ServiceCall) -> dict[str, Any]:
-        opts: dict[str, Any] = hass.data[DOMAIN].get("options", {})
+        domain_data = hass.data[DOMAIN]
+        opts: dict[str, Any] = domain_data.get("options", {})
         return await _play_rendered_audio(
             hass,
             call,
             notes=call.data[ATTR_NOTES],
             instrument=call.data.get(
-                ATTR_INSTRUMENT, opts.get(CONF_DEFAULT_INSTRUMENT, DEFAULT_INSTRUMENT)
+                ATTR_INSTRUMENT,
+                domain_data.get("live_instrument")
+                or opts.get(CONF_DEFAULT_INSTRUMENT, DEFAULT_INSTRUMENT),
             ),
-            bpm=call.data.get(ATTR_BPM, opts.get(CONF_DEFAULT_BPM, DEFAULT_BPM)),
+            bpm=call.data.get(
+                ATTR_BPM,
+                domain_data.get("live_bpm") or opts.get(CONF_DEFAULT_BPM, DEFAULT_BPM),
+            ),
             octave=call.data.get(ATTR_OCTAVE, DEFAULT_OCTAVE),
-            reverb=call.data.get(ATTR_REVERB, opts.get(CONF_DEFAULT_REVERB, DEFAULT_REVERB)),
+            reverb=call.data.get(
+                ATTR_REVERB,
+                domain_data.get("live_reverb")
+                if domain_data.get("live_reverb") is not None
+                else opts.get(CONF_DEFAULT_REVERB, DEFAULT_REVERB),
+            ),
             volume_level=call.data.get(ATTR_VOLUME_LEVEL),
             announce=call.data.get(
                 ATTR_ANNOUNCE, opts.get(CONF_DEFAULT_ANNOUNCE, DEFAULT_ANNOUNCE)
@@ -339,7 +429,8 @@ def _register_services(hass: HomeAssistant) -> None:
         )
 
     async def handle_play_preset(call: ServiceCall) -> dict[str, Any]:
-        opts: dict[str, Any] = hass.data[DOMAIN].get("options", {})
+        domain_data = hass.data[DOMAIN]
+        opts: dict[str, Any] = domain_data.get("options", {})
         preset_key = call.data[ATTR_PRESET]
         preset = PRESETS[preset_key]
         return await _play_rendered_audio(
@@ -349,12 +440,80 @@ def _register_services(hass: HomeAssistant) -> None:
             instrument=call.data.get(ATTR_INSTRUMENT, str(preset["instrument"])),
             bpm=call.data.get(ATTR_BPM, int(preset["bpm"])),
             octave=DEFAULT_OCTAVE,
-            reverb=call.data.get(ATTR_REVERB, opts.get(CONF_DEFAULT_REVERB, DEFAULT_REVERB)),
+            reverb=call.data.get(
+                ATTR_REVERB,
+                domain_data.get("live_reverb")
+                if domain_data.get("live_reverb") is not None
+                else opts.get(CONF_DEFAULT_REVERB, DEFAULT_REVERB),
+            ),
             volume_level=call.data.get(ATTR_VOLUME_LEVEL),
             announce=call.data.get(
                 ATTR_ANNOUNCE, opts.get(CONF_DEFAULT_ANNOUNCE, DEFAULT_ANNOUNCE)
             ),
         )
+
+    async def handle_save_melody(call: ServiceCall) -> dict[str, Any]:
+        custom_melodies = await async_ensure_melodies_loaded(hass)
+        domain_data = hass.data[DOMAIN]
+        opts: dict[str, Any] = domain_data.get("options", {})
+
+        title = call.data[ATTR_TITLE].strip()
+        notes = call.data[ATTR_NOTES].strip()
+        if not title:
+            raise HomeAssistantError("Bitte einen Titel für die Melodie angeben.")
+
+        fallback_bpm = int(
+            domain_data.get("live_bpm") or opts.get(CONF_DEFAULT_BPM, DEFAULT_BPM)
+        )
+        try:
+            events, parsed_bpm = parse_notes(notes, bpm=fallback_bpm)
+        except ValueError as err:
+            raise HomeAssistantError(str(err)) from err
+        if not events:
+            raise HomeAssistantError("Keine gültigen Noten zum Speichern gefunden.")
+
+        instrument = call.data.get(
+            ATTR_INSTRUMENT,
+            domain_data.get("live_instrument")
+            or opts.get(CONF_DEFAULT_INSTRUMENT, DEFAULT_INSTRUMENT),
+        )
+        bpm = int(call.data.get(ATTR_BPM, parsed_bpm))
+
+        melody_id = slugify(title) or hashlib.sha1(title.encode()).hexdigest()[:8]
+        entry = {
+            "id": melody_id,
+            "title": title,
+            "notes": notes,
+            "instrument": instrument,
+            "bpm": bpm,
+        }
+        custom_melodies[melody_id] = entry
+        await domain_data["store"].async_save(custom_melodies)
+        return entry
+
+    async def handle_delete_melody(call: ServiceCall) -> None:
+        custom_melodies = await async_ensure_melodies_loaded(hass)
+        domain_data = hass.data[DOMAIN]
+        melody_id = (call.data.get(ATTR_MELODY_ID) or "").strip()
+        title = (call.data.get(ATTR_TITLE) or "").strip()
+
+        target_id: str | None = None
+        if melody_id and melody_id in custom_melodies:
+            target_id = melody_id
+        elif title:
+            title_l = title.lower()
+            for k, v in custom_melodies.items():
+                if str(v.get("title", "")).lower() == title_l or k == slugify(title):
+                    target_id = k
+                    break
+
+        if target_id is None:
+            raise HomeAssistantError(
+                "Gespeicherte Melodie nicht gefunden (melody_id oder passenden title angeben)."
+            )
+
+        custom_melodies.pop(target_id, None)
+        await domain_data["store"].async_save(custom_melodies)
 
     if not hass.services.has_service(DOMAIN, SERVICE_PLAY_NOTES):
         hass.services.async_register(
@@ -374,6 +533,23 @@ def _register_services(hass: HomeAssistant) -> None:
             supports_response=SupportsResponse.OPTIONAL,
         )
 
+    if not hass.services.has_service(DOMAIN, SERVICE_SAVE_MELODY):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SAVE_MELODY,
+            handle_save_melody,
+            schema=SAVE_MELODY_SCHEMA,
+            supports_response=SupportsResponse.OPTIONAL,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_DELETE_MELODY):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_DELETE_MELODY,
+            handle_delete_melody,
+            schema=DELETE_MELODY_SCHEMA,
+        )
+
 
 def _ensure_initialized(hass: HomeAssistant) -> None:
     """Initialize shared storage and register the HTTP audio view once."""
@@ -382,8 +558,15 @@ def _ensure_initialized(hass: HomeAssistant) -> None:
             "audio_cache": OrderedDict(),
             "options": {},
             "view_registered": False,
+            "store": Store(hass, STORAGE_VERSION, STORAGE_KEY),
+            "custom_melodies": {},
+            "custom_melodies_loaded": False,
+            "live_notes": DEFAULT_LIVE_NOTES,
+            "live_instrument": DEFAULT_INSTRUMENT,
+            "live_bpm": DEFAULT_BPM,
+            "live_reverb": DEFAULT_REVERB,
         }
-    if not hass.data[DOMAIN]["view_registered"]:
+    if getattr(hass, "http", None) is not None and not hass.data[DOMAIN]["view_registered"]:
         hass.http.register_view(NotePlayerAudioView(hass))
         hass.data[DOMAIN]["view_registered"] = True
     _register_services(hass)
@@ -392,29 +575,50 @@ def _ensure_initialized(hass: HomeAssistant) -> None:
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up Note Player domain components."""
     _ensure_initialized(hass)
+    await async_ensure_melodies_loaded(hass)
     return True
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Update cached default options when the user changes integration options."""
     if DOMAIN in hass.data:
-        hass.data[DOMAIN]["options"] = dict(entry.options or entry.data)
+        opts = dict(entry.options or entry.data)
+        hass.data[DOMAIN]["options"] = opts
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Note Player from a config entry."""
     _ensure_initialized(hass)
-    hass.data[DOMAIN]["options"] = dict(entry.options or entry.data)
+    await async_ensure_melodies_loaded(hass)
+    opts = dict(entry.options or entry.data)
+    domain_data = hass.data[DOMAIN]
+    domain_data["options"] = opts
+    if opts.get(CONF_DEFAULT_INSTRUMENT) in INSTRUMENT_IDS:
+        domain_data["live_instrument"] = opts[CONF_DEFAULT_INSTRUMENT]
+    if opts.get(CONF_DEFAULT_BPM) is not None:
+        domain_data["live_bpm"] = int(opts[CONF_DEFAULT_BPM])
+    if opts.get(CONF_DEFAULT_REVERB) is not None:
+        domain_data["live_reverb"] = float(opts[CONF_DEFAULT_REVERB])
+
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload Note Player config entry and deregister services."""
+    """Unload Note Player config entry, platforms, and services."""
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if not unload_ok:
+        return False
+
     if DOMAIN in hass.data:
         hass.data[DOMAIN]["options"] = {}
-    if hass.services.has_service(DOMAIN, SERVICE_PLAY_NOTES):
-        hass.services.async_remove(DOMAIN, SERVICE_PLAY_NOTES)
-    if hass.services.has_service(DOMAIN, SERVICE_PLAY_PRESET):
-        hass.services.async_remove(DOMAIN, SERVICE_PLAY_PRESET)
+    for service in (
+        SERVICE_PLAY_NOTES,
+        SERVICE_PLAY_PRESET,
+        SERVICE_SAVE_MELODY,
+        SERVICE_DELETE_MELODY,
+    ):
+        if hass.services.has_service(DOMAIN, service):
+            hass.services.async_remove(DOMAIN, service)
     return True

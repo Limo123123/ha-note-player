@@ -206,3 +206,82 @@ play_preset:
       default: true
       selector:
         boolean:
+
+save_melody:
+  name: Eigene Melodie speichern (für Browse Media)
+  description: Speichert eine benannte Melodie dauerhaft, damit sie direkt in Browse Media unter jedem Instrument abrufbar ist.
+  fields:
+    title:
+      name: Titel
+      description: Anzeigename in Browse Media (z. B. "Meine Haustür-Melodie").
+      required: true
+      selector:
+        text:
+    notes:
+      name: Noten / Akkorde / RTTTL
+      description: Die Notenfolge oder RTTTL-Melodie.
+      required: true
+      selector:
+        text:
+          multiline: true
+    instrument:
+      name: Standard-Instrument (optional)
+      description: Standard-Instrument für "Eigene gespeicherte Melodien".
+      required: false
+      selector:
+        select:
+          options:
+            - label: Okarina
+              value: ocarina
+            - label: Querflöte
+              value: flute
+            - label: Panflöte
+              value: pan_flute
+            - label: Klavier (Flügel)
+              value: piano
+            - label: E-Piano (Rhodes)
+              value: epiano
+            - label: Akustik-Gitarre (Nylon)
+              value: guitar
+            - label: Westerngitarre (Stahlsaiten)
+              value: steel_guitar
+            - label: E-Gitarre
+              value: electric_guitar
+            - label: Violine / Streicher
+              value: violin
+            - label: Harfe
+              value: harp
+            - label: Spieluhr / Glockenspiel
+              value: music_box
+            - label: Orgel
+              value: organ
+            - label: 8-Bit / Retro
+              value: chiptune
+    bpm:
+      name: Tempo (BPM, optional)
+      description: Standard-Tempo der gespeicherten Melodie.
+      required: false
+      selector:
+        number:
+          min: 30
+          max: 300
+          step: 1
+          unit_of_measurement: BPM
+          mode: slider
+
+delete_melody:
+  name: Gespeicherte Melodie löschen
+  description: Entfernt eine zuvor gespeicherte eigene Melodie aus Browse Media.
+  fields:
+    melody_id:
+      name: Melodie-ID (Slug, optional)
+      description: Gespeicherte ID (z. B. "meine-haustur-melodie").
+      required: false
+      selector:
+        text:
+    title:
+      name: Titel (optional)
+      description: Alternativ zum Löschen der exakte Titel der Melodie.
+      required: false
+      selector:
+        text:
