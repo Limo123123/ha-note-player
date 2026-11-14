@@ -33,9 +33,13 @@
 
 ### Option 1: HACS (Custom Repository)
 
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Limo123123&repository=ha-note-player&category=integration)
+
+Or manually via HACS:
+
 1. Open **HACS** in Home Assistant.
 2. Open the three-dot menu (**⋮**) in the top right and select **Custom repositories**.
-3. Add this repository URL and choose category **Integration**.
+3. Add `https://github.com/Limo123123/ha-note-player` and choose category **Integration**.
 4. Click **Add**, find **Note Player** in HACS, and click **Download**.
 5. Restart Home Assistant.
 6. Go to **Settings → Devices & Services → Add Integration** and search for **Note Player**.
